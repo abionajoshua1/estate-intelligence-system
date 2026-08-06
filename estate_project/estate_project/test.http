@@ -1,0 +1,166 @@
+### Get JWT Token
+POST http://127.0.0.1:8000/api/token/
+Content-Type: application/json
+
+{
+  "username": "wunmi",
+  "password": "124578"
+}
+
+###
+
+### Test AI Endpoint
+GET http://127.0.0.1:8000/api/properties/
+Content-Type: application/json
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzg0Mzg0OTQ0LCJpYXQiOjE3ODQzODQ2NDQsImp0aSI6IjJmZmE1MzFmOWE2YTRkNzU4NzllOWZjODkxMjQyMTkxIiwidXNlcl9pZCI6IjEifQ.NuM6vSN8g8UDnv3EmK6R7GDCtcCkpkc67UOAYdOcmB4
+
+
+###
+DELETE http://127.0.0.1:8000/api/properties/P003/delete/
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzg1ODc1NzMxLCJpYXQiOjE3ODU4NzU0MzEsImp0aSI6ImExM2Q0MGFhZTM3NzQ3NTA5ZmNiZmZkNWE5MmU2OTkzIiwidXNlcl9pZCI6IjMifQ.xQg9bkCeFIKDi9NmwOg1ihCRdkirvupK-0O7Pdcm8HQ
+
+### Health Check
+GET http://127.0.0.1:8000/api/properties/
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzg0NDYxOTc1LCJpYXQiOjE3ODQ0NjE2NzUsImp0aSI6IjczZjRiNmNkYjY0ZjQxMGY5YTlhYmZjNWQ0ODYyMTZjIiwidXNlcl9pZCI6IjEifQ.SqvyesGgOzGlsvx3p7stOmaVyjqsv7l5YCG_ScywcQw
+
+###
+POST http://127.0.0.1:8000/api/properties/create/
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzg0NDYxODI5LCJpYXQiOjE3ODQ0NjE1MjksImp0aSI6IjFiYzRjYjQ3YTcyNDQ5NDhhY2E0Y2RlNDlkZTc5YTBlIiwidXNlcl9pZCI6IjEifQ.o4fJ2wcnVB6RbHEvknrWDQ79auC6IYuELtpIFbSegz4
+Content-Type: application/json
+
+{
+    "estate_id": "E001",
+    "property_number": "A101",
+    "property_type": "Apartment",
+    "bedrooms": 2,
+    "bathrooms": 2,
+    "status": "Available"
+}
+###
+PUT http://127.0.0.1:8000/api/properties/P003/
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzg1ODYzMjc5LCJpYXQiOjE3ODU4NjI5NzksImp0aSI6IjYzZmFlODRkOTdlYzQxNjdiY2ZhN2FmNjhiODU1MzljIiwidXNlcl9pZCI6IjMifQ.Tkg1C0nD43iuZNDuZl0Uurhw40Eh3Yg3tmgvmVx00to
+Content-Type: application/json
+
+{
+    "estate_id": "E001",
+    "property_number": "A102",
+    "property_type": "Apartment",
+    "bedrooms": 3,
+    "bathrooms": 2,
+    "status": "Maintenance"
+}
+###
+POST http://127.0.0.1:8000/api/residents/assign-property/
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzg1ODYwODcwLCJpYXQiOjE3ODU4NjA1NzAsImp0aSI6ImQ1NmM3YWFhYmYxYTQ5MjE5ZTZmMzRlZWExODUwMWU4IiwidXNlcl9pZCI6IjMifQ.P4MPxWST0JMHn8cIhAnEIzcSaydcWKXfzO2oTnhz-zE
+Content-Type: application/json
+
+{
+    "resident_id": "R001",
+    "property_id": "P003"
+}
+
+###
+POST http://127.0.0.1:8000/api/dashboard/complaints/
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzg1ODU5NDgxLCJpYXQiOjE3ODU4NTkxODEsImp0aSI6IjI2MTE0MGFkYmYyYjRiZGQ5MGFhNTY1NTI1YjQyOTYwIiwidXNlcl9pZCI6IjMifQ.gMROCRVQxeH0sktpVOOuM0uoAOmAoVg6e5oWKlDP2vg
+Content-Type: application/json
+
+{
+    "property": 2,
+    "title": "No electricity",
+    "description": "There has been no electricity since yesterday.",
+    "category": "electricity",
+    "location": "Block B",
+    "priority": "high"
+}
+
+###
+PUT  http://127.0.0.1:8000/api/complaints/C004/
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzg1ODYxNzA4LCJpYXQiOjE3ODU4NjE0MDgsImp0aSI6IjI5MTllODE5ZWFhMzQ0MTNiYThlNjM0ZTA1Y2E0MTYyIiwidXNlcl9pZCI6IjMifQ.M9AyCWB8kRQz56DubcYK_zgpHmaZ83H4zpaiWKrIE0E
+Content-Type: application/json
+
+{
+    "status": "Resolved"
+}
+
+###
+GET http://127.0.0.1:8000/api/dashboard/overview/
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzg0MzIyMjc4LCJpYXQiOjE3ODQzMjE5NzgsImp0aSI6IjkzYTUxY2VlOWZjNjRjNGI5ZTU5NmYyZGRjZjBhZWEyIiwidXNlcl9pZCI6IjEifQ.KDG_flcQI5p3oAGENi5I3mIDvM_r9v1GDzp5Tt7c-AE
+
+###
+GET http://127.0.0.1:8000/api/dashboard/recent-complaints/
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzg0Mzc4MDUzLCJpYXQiOjE3ODQzNzc3NTMsImp0aSI6Ijc5NTM1YzBhNTM4YjRmMTJiOGYwNTU1NzMxMjQ5YTI0IiwidXNlcl9pZCI6IjEifQ.-CUQBM8mjOYpNvbq424CGHNmjxG51-a8sEuOJpzZRqU
+
+###
+POST http://127.0.0.1:8000/api/estates/create/
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzg0NDY0Mzc0LCJpYXQiOjE3ODQ0NjQwNzQsImp0aSI6IjYyMWU4OTQ4Zjg2NzQxZTM5NzRmY2ZlMzNlMDQ3ZDM2IiwidXNlcl9pZCI6IjEifQ.Hx9TIJYnSq9T0AKda9MaGrF4GiJ5nF2L_JYf2CHaAQ8
+Content-Type: application/json
+
+{
+    "name": "Voera Estate",
+    "address": "Arepo, Ogun State",
+    "city": "Ogun",
+    "state": "Ogun",
+    "status": "Active"
+}
+
+###
+POST http://127.0.0.1:8000/api/maintenance-team/create/
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzg0NTY1MDQwLCJpYXQiOjE3ODQ1NjQ3NDAsImp0aSI6ImM5OGJiMzE3MDI1ZTQxNjJiMmU0M2NiNTM1N2RlNzc1IiwidXNlcl9pZCI6IjEifQ.oThiv-Ry9c65hSZcxs2uLUaj20hkJ8G-i6Esvixu6qE
+Content-Type: application/json
+
+{
+    "estate_id": "E001",
+    "team_name": "Plumbing Team",
+    "specialization": "Plumbing",
+    "phone": "08039876543",
+    "email": "plumbing@greenfield.com",
+    "status": "Active"
+}
+
+###
+GET  http://127.0.0.1:8000/api/maintenance-teams/T001/
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzg0NTYwOTIwLCJpYXQiOjE3ODQ1NjA2MjAsImp0aSI6ImJmZjBjYjczYmY4ZDQ5MDk5OGM4NWQ2YzYxODRiNzNkIiwidXNlcl9pZCI6IjEifQ.hRPkRceP2VeQASkdoSjxGcAVhdD3mXYZOFJBhDeAQZU
+
+###
+DELETE  http://127.0.0.1:8000/api/maintenance-teams/T001/delete/
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzg0NTYxODA4LCJpYXQiOjE3ODQ1NjE1MDgsImp0aSI6IjdmN2RiMzZlMzBkMzQ3MTFhM2JiMDQ3YzdkMDI5MjhiIiwidXNlcl9pZCI6IjEifQ.E0p6wS3v1XTSpzpyiz7xvy__eJGOm41kEDh8VQhEDv0
+
+###
+GET http://127.0.0.1:8000/api/ai/test/
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzg0NzMzMDk0LCJpYXQiOjE3ODQ3MzI3OTQsImp0aSI6IjllYjU0ZGZhNTdlNjRlZTg4NmQ2MjMxNmQ3MDc2MDFiIiwidXNlcl9pZCI6IjEifQ.u945OLe8ABDbAFiBvkE8riVWekpSDb1fUN9tc8e9F9w
+
+###
+POST http://127.0.0.1:8000/api/ai/v3/
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzg0ODIxNDExLCJpYXQiOjE3ODQ4MjExMTEsImp0aSI6IjQ3ODI3MDlmMDYwNDRlMDFiNzEwZDc1ZTE2ZDIzYzFiIiwidXNlcl9pZCI6IjEifQ.cWZcPAJw38qx1Q-COfyN8Fr-DwMTa_yB0dzgziI-tIU
+Content-Type: application/json
+
+{
+    "question": "List all active residents."
+}
+
+###
+POST http://127.0.0.1:8000/api/register/
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzg1MDg5NzAzLCJpYXQiOjE3ODUwODk0MDMsImp0aSI6IjM1NGE3OGRjNTJlZDQzMTc5MzExMzQxZDJkNWJlNTU4IiwidXNlcl9pZCI6IjEifQ.JEQmjy_DWyJerOOMWfTVae9Dkopgxa_T5Dm7Xfu9tjY
+Content-Type: application/json
+
+{
+  "username": "joshua",
+  "email": "joshua@example.com",
+  "password": "StrongPassword123",
+  "first_name": "Joshua",
+  "last_name": "Doe"
+}
+
+###
+GET http://127.0.0.1:8000/api/dashboard/residents/
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzg1Nzg2NDk4LCJpYXQiOjE3ODU3ODYxOTgsImp0aSI6ImQ1YTcyODkyY2EyZDQ4NzJiNDFkMzQ4YmQyNTJjOGVjIiwidXNlcl9pZCI6IjMifQ.JQ7-NmblVDibL14aHQ2I19EcMIx2LBcwb5OYIKZj7jo
+
+
+###
+DELETE http://127.0.0.1:8000/api/maintenance-teams/T004/delete/
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzg1OTYzOTg5LCJpYXQiOjE3ODU5NjM2ODksImp0aSI6IjEzNjcyNzUwMTZlNjQ1OGU4ZDVkYTNjYzhlYzk4OGNiIiwidXNlcl9pZCI6IjQifQ.fQQv78JOsXoamHbtzFAA4E81V5_K-f8NDRqQmWbMqso
+
+
+###
+GET http://127.0.0.1:8000/api/me/
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzg1OTY0OTA2LCJpYXQiOjE3ODU5NjQ2MDYsImp0aSI6ImRjMTE2MDY5MWQ5ZDQ4MWM4MGYyM2M5MjYxOGQ1ZDM1IiwidXNlcl9pZCI6IjQifQ.wkDs8u66FL6yi9Gg08A6KP2Scmg_M4fpUG-Ne8zwucQ
