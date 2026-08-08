@@ -58,7 +58,12 @@ def generate_cypher(question: str):
     
     q = question.lower()
     
-    if "show all estates" in q or "list all estates" in q:
+    if (
+        "show all estates" in q 
+        or "list all estates" in q
+        or"list every estate" in q
+        or "show all estates" in q
+        or "show every estate" in q):
         print(">>> HARDCODED ESTATE QUERY USED <<<")
         return """
     MATCH (e:Estate)

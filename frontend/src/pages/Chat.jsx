@@ -21,6 +21,11 @@ import aiService from "@/services/aiService";
 // Minimal markdown renderer (bold, italic, inline code, code blocks, links,
 // lists, headings). Kept dependency-free since no markdown library was
 // listed among the existing architecture.
+//
+// NOTE: This renderer only ever receives `m.text`, the natural-language
+// string returned by the backend as `res.response`. `m.data` (whatever
+// structured payload the API also returns) is intentionally never passed
+// into this renderer or displayed anywhere in the UI.
 // ---------------------------------------------------------------------------
 function renderInline(text, keyPrefix) {
   const parts = [];
@@ -42,7 +47,7 @@ function renderInline(text, keyPrefix) {
       parts.push(
         <code
           key={key}
-          className="rounded bg-black/10 px-1 py-0.5 font-mono text-[0.85em]"
+          className="rounded bg-foreground/10 px-1.5 py-0.5 font-mono text-[0.85em]"
         >
           {token.slice(1, -1)}
         </code>
@@ -55,7 +60,7 @@ function renderInline(text, keyPrefix) {
           href={linkMatch[2]}
           target="_blank"
           rel="noreferrer"
-          className="underline underline-offset-2"
+          className="underline underline-offset-2 hover:opacity-80"
         >
           {linkMatch[1]}
         </a>
@@ -85,7 +90,7 @@ function Markdown({ text }) {
   const flushList = (key) => {
     if (listBuffer.length) {
       blocks.push(
-        <ul key={key} className="list-disc space-y-1 pl-5">
+        <ul key={key} className="list-disc space-y-1 pl-5 marker:text-muted-foreground">
           {listBuffer.map((item, i) => (
             <li key={i}>{renderInline(item, `li-${key}-${i}`)}</li>
           ))}
@@ -103,7 +108,7 @@ function Markdown({ text }) {
         blocks.push(
           <pre
             key={`code-${i}`}
-            className="overflow-x-auto rounded-md bg-black/85 p-3 text-xs text-white"
+            className="overflow-x-auto rounded-lg border border-border/50 bg-black/90 p-3 text-xs leading-relaxed text-zinc-100"
           >
             <code>{codeBuffer.join("\n")}</code>
           </pre>
@@ -129,7 +134,7 @@ function Markdown({ text }) {
       const content = line.trim().replace(/^#{1,3}\s+/, "");
       const Tag = level === 1 ? "h3" : level === 2 ? "h4" : "h5";
       blocks.push(
-        <Tag key={`h-${i}`} className="font-semibold">
+        <Tag key={`h-${i}`} className="font-semibold tracking-tight">
           {renderInline(content, `h-${i}`)}
         </Tag>
       );
@@ -244,8 +249,6 @@ export default function Chat() {
         {
           role: "ai",
           text: res?.response,
-          data: res?.data,
-          cypher: res?.cypher,
         },
       ]);
     } catch (err) {
@@ -283,18 +286,35 @@ export default function Chat() {
   const hasMessages = messages.length > 0;
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col bg-background">
+      {/* Scoped entry-animation keyframes — self-contained, no Tailwind
+          plugin or global CSS file required. */}
+      <style>{`
+        @keyframes chat-msg-in {
+          from { opacity: 0; transform: translateY(6px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .chat-msg-in {
+          animation: chat-msg-in 0.28s ease-out both;
+        }
+      `}</style>
+
       {/* Header */}
-      <div className="flex items-center justify-between border-b px-4 py-3 sm:px-6">
-        <div className="flex items-center gap-2">
-          <Sparkles className="h-5 w-5" />
-          <h1 className="text-base font-semibold">Assistant</h1>
+      <div className="flex items-center justify-between border-b border-border/60 bg-background/95 px-4 py-3 backdrop-blur sm:px-6">
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
+            <Sparkles className="h-4 w-4 text-primary" />
+          </div>
+          <div>
+            <h1 className="text-sm font-semibold leading-none">Assistant</h1>
+            <p className="mt-0.5 text-xs text-muted-foreground">Estate AI</p>
+          </div>
         </div>
         <Button
           type="button"
           variant="ghost"
           size="sm"
-          className="gap-2"
+          className="gap-2 text-muted-foreground hover:text-foreground"
           onClick={clearChat}
           disabled={!hasMessages}
         >
@@ -305,15 +325,15 @@ export default function Chat() {
 
       {/* Messages */}
       <ScrollArea className="flex-1">
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-4 py-6 sm:px-6">
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 px-4 py-6 sm:px-6">
           {!hasMessages && (
-            <div className="flex flex-col items-center gap-6 py-12 text-center">
-              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
-                <Sparkles className="h-6 w-6" />
+            <div className="flex flex-col items-center gap-6 py-14 text-center">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10">
+                <Sparkles className="h-6 w-6 text-primary" />
               </div>
               <div>
-                <h2 className="text-lg font-semibold">Estate AI Assistant</h2>
-                <p className="text-sm text-muted-foreground">
+                <h2 className="text-lg font-semibold tracking-tight">Estate AI Assistant</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
                   Ask questions about complaints, residents, properties,
                   maintenance, and estate insights.
                 </p>
@@ -322,7 +342,7 @@ export default function Chat() {
                 {SUGGESTED_PROMPTS.map(({ label, prompt }) => (
                   <Card
                     key={label}
-                    className="cursor-pointer transition-colors hover:bg-muted"
+                    className="cursor-pointer border-border/60 shadow-none transition-colors hover:border-primary/40 hover:bg-muted/60"
                     onClick={() => send(prompt)}
                   >
                     <CardContent className="p-3 text-left text-sm">
@@ -339,25 +359,27 @@ export default function Chat() {
             return (
               <div
                 key={i}
-                className={`flex items-start gap-3 ${
+                className={`chat-msg-in flex items-start gap-3 ${
                   isUser ? "flex-row-reverse" : ""
                 }`}
               >
                 <div
                   className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
-                    isUser ? "bg-primary text-primary-foreground" : "bg-muted"
+                    isUser
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted text-foreground"
                   }`}
                 >
                   {isUser ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
                 </div>
 
                 <div
-                  className={`group relative max-w-[80%] rounded-2xl px-4 py-2.5 text-sm sm:max-w-[70%] ${
+                  className={`group relative max-w-[80%] px-4 py-2.5 text-sm shadow-sm sm:max-w-[70%] ${
                     isUser
-                      ? "bg-primary text-primary-foreground"
+                      ? "rounded-2xl rounded-tr-sm bg-primary text-primary-foreground"
                       : m.isError
-                      ? "bg-destructive/10 text-destructive"
-                      : "bg-muted"
+                      ? "rounded-2xl rounded-tl-sm border border-destructive/20 bg-destructive/10 text-destructive"
+                      : "rounded-2xl rounded-tl-sm bg-muted text-foreground"
                   }`}
                 >
                   {m.isError && (
@@ -373,12 +395,6 @@ export default function Chat() {
                     <Markdown text={m.text} />
                   )}
 
-                  {m.data !== undefined && (
-                    <pre className="mt-2 overflow-x-auto rounded-md bg-black/85 p-2 text-xs text-white">
-                      {JSON.stringify(m.data, null, 2)}
-                    </pre>
-                  )}
-
                   {!isUser && !m.isError && m.text && (
                     <div className="mt-1 flex justify-end opacity-0 transition-opacity group-hover:opacity-100">
                       <CopyButton text={m.text} />
@@ -390,11 +406,11 @@ export default function Chat() {
           })}
 
           {loading && (
-            <div className="flex items-start gap-3">
+            <div className="chat-msg-in flex items-start gap-3">
               <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted">
                 <Bot className="h-4 w-4" />
               </div>
-              <div className="rounded-2xl bg-muted px-4 py-1">
+              <div className="rounded-2xl rounded-tl-sm bg-muted px-4 py-1 shadow-sm">
                 <TypingIndicator />
               </div>
             </div>
@@ -405,8 +421,8 @@ export default function Chat() {
       </ScrollArea>
 
       {/* Composer */}
-      <div className="border-t px-4 py-3 sm:px-6">
-        <div className="mx-auto flex w-full max-w-3xl items-end gap-2">
+      <div className="border-t border-border/60 bg-background/95 px-4 py-3 backdrop-blur sm:px-6">
+        <div className="mx-auto flex w-full max-w-3xl items-end gap-2 rounded-2xl border border-border/60 bg-muted/40 p-2 shadow-sm focus-within:border-primary/40">
           <Textarea
             ref={textareaRef}
             value={input}
@@ -414,11 +430,12 @@ export default function Chat() {
             onKeyDown={handleKeyDown}
             placeholder="Ask about complaints, residents, properties, or maintenance..."
             rows={1}
-            className="max-h-40 flex-1 resize-none"
+            className="max-h-40 flex-1 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0"
           />
           <Button
             type="button"
             size="icon"
+            className="shrink-0 rounded-xl"
             onClick={() => send()}
             disabled={loading || !input.trim()}
             aria-label="Send message"

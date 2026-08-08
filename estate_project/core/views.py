@@ -3103,7 +3103,10 @@ def format_results(question: str, data):
 
         for row in data:
             estate_id = row.get("estate_id")
-            estate_name = row.get("name") or row.get("estate_name")
+            estate_name = (
+                row.get("name")
+                or row.get("estate_name")
+            )
 
             if estate_name:
                 if estate_id:
@@ -3111,103 +3114,201 @@ def format_results(question: str, data):
                 else:
                     lines.append(f"• {estate_name}")
 
-        return "Estates found:\n\n" + "\n".join(lines)
+        if lines:
+            return "Estates found:\n\n" + "\n".join(lines)
 
     # ======================
     # PROPERTIES
     # ======================
-    if "property" in q:
+    if "property" in q or "properties" in q:
+
+        # Handle property counts
+        if "property_count" in data[0]:
+            return f"There are {data[0]['property_count']} properties."
 
         lines = []
 
         for row in data:
-            
+
             property_number = (
                 row.get("property_number")
                 or row.get("p.property_number")
             )
-            
-            property_type = {
+
+            property_type = (
                 row.get("property_type")
                 or row.get("p.property_type")
-            }
-            
+            )
+
             status = (
                 row.get("status")
                 or row.get("p.status")
             )
-            
-            lines.append(
-                f"• {property_number} - {property_type} {status}"
-            )
 
-        return "Properties:\n\n" + "\n".join(lines)
+            details = []
+
+            if property_number:
+                details.append(str(property_number))
+
+            if property_type:
+                details.append(str(property_type))
+
+            if status:
+                details.append(str(status))
+
+            if details:
+                lines.append("• " + " - ".join(details))
+
+        if lines:
+            return "Properties:\n\n" + "\n".join(lines)
 
     # ======================
     # RESIDENTS
     # ======================
-    if "resident" in q:
+    if "resident" in q or "residents" in q:
+
+        # Handle resident count
+        if "resident_count" in data[0]:
+            count = data[0]["resident_count"]
+            return f"There are {count} registered residents."
 
         lines = []
 
         for row in data:
-            
+
             resident = (
                 row.get("resident_name")
                 or row.get("name")
                 or row.get("r.name")
             )
-            
+
             resident_id = (
                 row.get("resident_id")
                 or row.get("r.resident_id")
             )
-            
-            if resident_id:
-                lines.append(f"• {resident} ({resident_id})")
-            else:
-                lines.append(f"• {resident}")
-                
-        return "Residents:\n\n" + "\n".join(lines)
+
+            if resident:
+                if resident_id:
+                    lines.append(f"• {resident} ({resident_id})")
+                else:
+                    lines.append(f"• {resident}")
+
+        if lines:
+            return "Residents:\n\n" + "\n".join(lines)
 
     # ======================
     # COMPLAINTS
     # ======================
-    if "complaint" in q:
+    if "complaint" in q or "complaints" in q:
+
+        # Handle complaint counts
+        if "complaint_count" in data[0]:
+            count = data[0]["complaint_count"]
+            return f"There are {count} complaints."
 
         lines = []
 
         for row in data:
-            
+
+            # Top resident complaint result
+            if "resident" in row and "complaints" in row:
+                resident = row.get("resident")
+                complaints = row.get("complaints")
+
+                if resident:
+                    lines.append(
+                        f"• {resident} — {complaints} complaints"
+                    )
+
+                continue
+
             title = (
                 row.get("title")
                 or row.get("c.title")
             )
-            
+
             priority = (
                 row.get("priority")
                 or row.get("c.priority")
-                or "Not specified"
             )
-            
+
             status = (
                 row.get("status")
                 or row.get("c.status")
-
             )
-            
+
             complaint_id = (
                 row.get("complaint_id")
                 or row.get("c.complaint_id")
             )
 
-            lines.append(
-                f"• {complaint_id}: {title} | {priority} | {status}"
+            details = []
+
+            if complaint_id:
+                details.append(str(complaint_id))
+
+            if title:
+                details.append(str(title))
+
+            if priority:
+                details.append(str(priority))
+
+            if status:
+                details.append(str(status))
+
+            if details:
+                lines.append("• " + " | ".join(details))
+
+        if lines:
+            return "Complaints:\n\n" + "\n".join(lines)
+
+    # ======================
+    # MANAGERS
+    # ======================
+    if "manager" in q or "managers" in q:
+
+        lines = []
+
+        for row in data:
+
+            manager = (
+                row.get("manager_name")
+                or row.get("name")
+                or row.get("m.name")
             )
 
-        return "Complaints:\n\n" + "\n".join(lines)
+            if manager:
+                lines.append(f"• {manager}")
 
+        if lines:
+            return "Estate managers:\n\n" + "\n".join(lines)
+
+    # ======================
+    # MAINTENANCE TEAMS
+    # ======================
+    if "maintenance" in q or "team" in q or "teams" in q:
+
+        lines = []
+
+        for row in data:
+
+            team = (
+                row.get("team_name")
+                or row.get("name")
+                or row.get("t.team_name")
+            )
+
+            if team:
+                lines.append(f"• {team}")
+
+        if lines:
+            return "Maintenance teams:\n\n" + "\n".join(lines)
+
+    # ======================
+    # FALLBACK
+    # ======================
     return str(data)
+
 
 
 @api_view(["POST"])
