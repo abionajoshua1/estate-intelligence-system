@@ -7,3 +7,17 @@
 __pycache__/
 *.py[cod]
 
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+
+# Django
+*.sqlite3
+
+# Node
+node_modules/
+dist/
