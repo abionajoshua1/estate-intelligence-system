@@ -10,6 +10,16 @@ const authService = {
     const res = await api.get("me/");
     return res.data;
   },
+
+  updateProfile: async (data) => {
+    const res = await api.patch("me/", data);
+    return res.data;
+  },
+
+  changePassword: async (data) => {
+    const res = await api.post("change-password/", data);
+    return res.data;
+  },
 };
 
 export default authService;

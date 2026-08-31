@@ -1,35 +1,38 @@
 import re
 
 
+STATUS_VALUES = {
+    "active": "Active",
+    "inactive": "Inactive",
+    "available": "Available",
+    "occupied": "Occupied",
+    "pending": "Pending",
+    "resolved": "Resolved",
+    "in progress": "In Progress",
+    "open": "Open",
+    "maintenance": "Maintenance",
+}
+
+
 def normalize_cypher(cypher: str) -> str:
     """
-    Fix common LLM mistakes before sending Cypher to Neo4j.
+    Normalize known status literals produced by the LLM.
+
+    Only quoted status values are changed. All other Cypher
+    content is preserved.
     """
 
-    replacements = {
-        '"active"': '"Active"',
-        "'active'": "'Active'",
+    if not isinstance(cypher, str):
+        return cypher
 
-        '"inactive"': '"Inactive"',
-        "'inactive'": "'Inactive'",
+    pattern = re.compile(
+        r"""(["'])\s*(active|inactive|available|occupied|pending|resolved|in progress|open|maintenance)\s*\1""",
+        re.IGNORECASE,
+    )
 
-        '"available"': '"Available"',
-        "'available'": "'Available'",
+    def replace_status(match):
+        quote = match.group(1)
+        value = STATUS_VALUES[match.group(2).lower()]
+        return f"{quote}{value}{quote}"
 
-        '"occupied"': '"Occupied"',
-        "'occupied'": "'Occupied'",
-
-        '"pending"': '"Pending"',
-        "'pending'": "'Pending'",
-
-        '"resolved"': '"Resolved"',
-        "'resolved'": "'Resolved'",
-
-        '"in progress"': '"In Progress"',
-        "'in progress'": "'In Progress'",
-    }
-
-    for wrong, correct in replacements.items():
-        cypher = cypher.replace(wrong, correct)
-
-    return cypher
+    return pattern.sub(replace_status, cypher)

@@ -1,20 +1,19 @@
 from django.urls import path, include
 from . import views
 from . import dashboard_views
-from .auth_views import RegisterView, CurrentUserView
+from .auth_views import RegisterView, CurrentUserView, ChangePasswordView
 from .views import (
     ResidentOnlyView,
     ManagerOnlyView,
     AdminOnlyView,
     ManagerAdminView,
+    link_resident_account,
 )
 
 urlpatterns = [
     path("residents/", views.get_residents),
     path("residents/create/", views.create_resident),
-    
     path("residents/assign-property/", views.assign_property_to_resident),
-    
     path("residents/<str:resident_id>/", views.update_resident),
     path("residents/<str:resident_id>/delete/", views.delete_resident),
     
@@ -25,6 +24,7 @@ urlpatterns = [
     path("properties/<str:property_id>/delete/", views.delete_property),
 
     path("complaints/", views.get_complaints),
+    path("search/", views.global_search),
     path("complaints/create/", views.create_complaint),
     
     path("complaints/assign-property/", views.assign_property_to_complaint),
@@ -67,11 +67,22 @@ urlpatterns = [
     path("admin/", AdminOnlyView.as_view()),
     path("manager-admin/", ManagerAdminView.as_view()),
     
+    path(
+    "residents/link-account/",
+    link_resident_account,
+    name="link-resident-account",
+),
     
-    path("ai/test/", views.test_ai),
+    
     
     path("register/", RegisterView.as_view(), name="register"),
-path("me/", CurrentUserView.as_view(), name="current-user"),
+    path("me/", CurrentUserView.as_view(), name="current-user"),
+    path(
+    "change-password/",
+    ChangePasswordView.as_view(),
+    name="change-password",
+),
+    
     
 ]
 

@@ -6,7 +6,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Complaint
+from .models import Complaint, Notification
 from .serializers import (
     ComplaintSerializer,
     ResidentSerializer
@@ -151,3 +151,59 @@ class MyProfileView(APIView):
     def get(self, request):
         serializer = ResidentSerializer(request.user)
         return Response(serializer.data)
+    
+# ===========================
+# Notification Views
+# ===========================
+
+class NotificationListView(generics.ListAPIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        notifications = Notification.objects.filter(
+            user=request.user
+        ).order_by("-created_at")
+
+        data = [
+            {
+                "id": notification.id,
+                "title": notification.title,
+                "description": notification.message,
+                "type": notification.notification_type,
+                "is_read": notification.is_read,
+                "created_at": notification.created_at,
+            }
+            for notification in notifications
+        ]
+
+        unread_count = notifications.filter(
+            is_read=False
+        ).count()
+
+        return Response({
+            "notifications": data,
+            "unread_count": unread_count,
+        })
+
+
+class NotificationReadView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, pk):
+        try:
+            notification = Notification.objects.get(
+                id=pk,
+                user=request.user,
+            )
+        except Notification.DoesNotExist:
+            return Response(
+                {"detail": "Notification not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        notification.is_read = True
+        notification.save(update_fields=["is_read"])
+
+        return Response({
+            "message": "Notification marked as read."
+        })

@@ -1,6 +1,11 @@
 GRAPH_SCHEMA = """
 Database Schema
 
+Estate
+---------
+estate_id
+name
+
 Resident
 ---------
 resident_id
@@ -46,9 +51,13 @@ email
 
 Relationships
 
-(:Resident)-[:RAISED]->(:Complaint)
+(:Estate)-[:HAS_PROPERTY]->(:Property)
 
 (:Resident)-[:LIVES_IN]->(:Property)
+
+(:Resident)-[:RAISED]->(:Complaint)
+
+(:Complaint)-[:ABOUT]->(:Property)
 
 (:Complaint)-[:ASSIGNED_TO]->(:MaintenanceTeam)
 

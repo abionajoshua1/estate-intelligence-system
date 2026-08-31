@@ -53,16 +53,16 @@ import {
 import OverviewChart from "@/components/OverviewChart";
 
 /**
- * Summary card config. Real field names for /dashboard/overview/ weren't
- * confirmed, so each card tries a few common conventions and falls back to
- * whichever one the API actually returns.
+ * Summary card config. The real field names for /dashboard/overview/ have
+ * been confirmed, so each card maps directly to its actual backend key —
+ * no fallback guessing.
  */
 const SUMMARY_CARDS = [
   {
     key: "residents",
     label: "Residents",
     icon: Users,
-    valueKeys: ["residents", "residents_count", "total_residents"],
+    valueKeys: ["total_residents"],
     description: "Total residents registered across all properties.",
     accent: "text-blue-600 bg-blue-500/10 dark:text-blue-400",
   },
@@ -70,7 +70,7 @@ const SUMMARY_CARDS = [
     key: "properties",
     label: "Properties",
     icon: Building2,
-    valueKeys: ["properties", "properties_count", "total_properties"],
+    valueKeys: ["total_properties"],
     description: "Total properties currently managed on the platform.",
     accent: "text-violet-600 bg-violet-500/10 dark:text-violet-400",
   },
@@ -78,7 +78,7 @@ const SUMMARY_CARDS = [
     key: "complaints",
     label: "Complaints",
     icon: AlertTriangle,
-    valueKeys: ["complaints", "complaints_count", "total_complaints"],
+    valueKeys: ["total_complaints"],
     description: "Total complaints filed across all properties.",
     accent: "text-amber-600 bg-amber-500/10 dark:text-amber-400",
   },
@@ -86,7 +86,7 @@ const SUMMARY_CARDS = [
     key: "estates",
     label: "Estates",
     icon: Landmark,
-    valueKeys: ["estates", "estates_count", "total_estates"],
+    valueKeys: ["total_estates"],
     description: "Total estates under management.",
     accent: "text-emerald-600 bg-emerald-500/10 dark:text-emerald-400",
   },
@@ -157,9 +157,13 @@ function getInitials(value) {
 
 /**
  * Renders a table with columns derived from the shape of the data itself,
- * rather than hardcoded field names — the exact response shape for
- * top-residents / top-properties / recent-complaints wasn't available, so
- * this avoids silently guessing wrong keys.
+ * rather than hardcoded field names. The backend response shapes for
+ * top-residents / top-properties / recent-complaints are now confirmed
+ * (resident_id/resident_name/total_complaints, property_id/property_number/
+ * property_type/total_complaints, complaint_id/title/category/priority/
+ * status/resident_name/property_number/created_at), but this dynamic
+ * rendering is kept deliberately so the table stays correct if columns are
+ * added or reordered on the backend later.
  *
  * Adds a couple of enterprise-dashboard touches on top of the raw data:
  * - a rank badge when `showRank` is set (Top Residents / Top Properties)
@@ -274,55 +278,96 @@ function DataTable({ rows, showRank = false }) {
 }
 
 /**
- * Computes a handful of plain-language observations purely from data the
+ * Computes plain-language, operational takeaways purely from data the
  * existing hooks already returned — no separate "AI insight" endpoint
  * exists, so nothing here is fetched, invented, or hardcoded. Each insight
- * is only added if the fields it depends on are actually present.
+ * is only added if the fields it depends on are actually present and the
+ * underlying numbers make it meaningful (no divide-by-zero, no insights
+ * from empty datasets).
  */
-function computeInsights({ overview, categories, statuses, recentComplaints }) {
+function computeInsights({ overview, categories, statuses, topProperties }) {
   const insights = [];
 
+  // 1. Complaint pattern — leading category, its share of total, and
+  // whether that concentration signals a recurring issue.
   if (Array.isArray(categories) && categories.length > 0) {
-    const top = [...categories].sort((a, b) => (b.count ?? 0) - (a.count ?? 0))[0];
-    if (top?.category !== undefined && top?.count !== undefined) {
+    const categoryTotal = categories.reduce((sum, row) => sum + (Number(row.total) || 0), 0);
+    const top = [...categories].sort((a, b) => (Number(b.total) || 0) - (Number(a.total) || 0))[0];
+
+    if (top?.category !== undefined && Number(top?.total) > 0 && categoryTotal > 0) {
+      const share = Math.round((Number(top.total) / categoryTotal) * 100);
+      const interpretation =
+        share >= 40
+          ? "indicating a recurring maintenance concern worth attention."
+          : share >= 25
+          ? "a notable share worth keeping an eye on."
+          : "though complaints are otherwise fairly spread out across categories.";
+
       insights.push({
         id: "top-category",
-        text: `"${top.category}" is the most reported complaint category, with ${top.count} complaint${
-          top.count === 1 ? "" : "s"
-        }.`,
+        icon: AlertTriangle,
+        text: `"${top.category}" is the leading complaint category, accounting for ${share}% of reported issues (${top.total} of ${categoryTotal}), ${interpretation}`,
       });
     }
   }
 
+  // 2. Occupancy — occupied vs available, with a high/moderate/low read.
   if (Array.isArray(statuses) && statuses.length > 0) {
-    const top = [...statuses].sort((a, b) => (b.count ?? 0) - (a.count ?? 0))[0];
-    if (top?.status !== undefined && top?.count !== undefined) {
+    const statusTotalCount = statuses.reduce((sum, row) => sum + (Number(row.total) || 0), 0);
+    const occupied = statuses.find((row) => /occupied/i.test(String(row.status ?? "")));
+
+    if (occupied && statusTotalCount > 0) {
+      const occupiedCount = Number(occupied.total) || 0;
+      const available = statusTotalCount - occupiedCount;
+      const occupancyRate = Math.round((occupiedCount / statusTotalCount) * 100);
+      const level = occupancyRate >= 75 ? "high" : occupancyRate >= 50 ? "moderate" : "low";
+
       insights.push({
-        id: "top-status",
-        text: `Most properties are currently "${top.status}" (${top.count} propert${
-          top.count === 1 ? "y" : "ies"
-        }).`,
+        id: "occupancy",
+        icon: Building2,
+        text: `${occupancyRate}% of properties are occupied (${occupiedCount} of ${statusTotalCount}), leaving ${available} available unit${
+          available === 1 ? "" : "s"
+        } — occupancy is currently ${level}.`,
       });
     }
   }
 
+  // 3. Property/complaint pressure point — the property drawing the most
+  // complaints, if the data supports identifying one. Never fabricated.
+  if (Array.isArray(topProperties) && topProperties.length > 0) {
+    const withComplaints = topProperties.filter((row) => Number(row.total_complaints) > 0);
+    if (withComplaints.length > 0) {
+      const top = [...withComplaints].sort(
+        (a, b) => (Number(b.total_complaints) || 0) - (Number(a.total_complaints) || 0)
+      )[0];
+      const identifier = top.property_number ?? top.property_id;
+
+      if (identifier !== undefined) {
+        insights.push({
+          id: "top-property",
+          icon: Landmark,
+          text: `Property ${identifier}${
+            top.property_type ? ` (${top.property_type})` : ""
+          } has logged the most complaints (${top.total_complaints}), making it the property needing the most attention.`,
+        });
+      }
+    }
+  }
+
+  // 4. Portfolio/estate health — complaint pressure relative to portfolio
+  // size, framed as an operational read rather than a raw ratio.
   const complaintsTotal = pickValue(overview, ["complaints", "complaints_count", "total_complaints"]);
   const propertiesTotal = pickValue(overview, ["properties", "properties_count", "total_properties"]);
   if (typeof complaintsTotal === "number" && typeof propertiesTotal === "number" && propertiesTotal > 0) {
-    insights.push({
-      id: "ratio",
-      text: `On average, there are ${(complaintsTotal / propertiesTotal).toFixed(
-        2
-      )} complaints per property across the portfolio.`,
-    });
-  }
+    const ratio = complaintsTotal / propertiesTotal;
+    const pressure = ratio >= 1.5 ? "elevated" : ratio >= 0.5 ? "moderate" : "low";
 
-  if (Array.isArray(recentComplaints)) {
     insights.push({
-      id: "recent-volume",
-      text: `${recentComplaints.length} complaint${
-        recentComplaints.length === 1 ? "" : "s"
-      } currently showing in the recent activity feed.`,
+      id: "portfolio-health",
+      icon: Sparkles,
+      text: `The portfolio is averaging ${ratio.toFixed(2)} complaints per property across ${propertiesTotal} propert${
+        propertiesTotal === 1 ? "y" : "ies"
+      }, suggesting ${pressure} overall complaint pressure.`,
     });
   }
 
@@ -355,19 +400,22 @@ export default function Dashboard() {
   }
 
   const categoryTotal = Array.isArray(complaintsByCategoryQuery.data)
-    ? complaintsByCategoryQuery.data.reduce((sum, row) => sum + (Number(row.count) || 0), 0)
+    ? complaintsByCategoryQuery.data.reduce((sum, row) => sum + (Number(row.total) || 0), 0)
     : undefined;
   const statusTotal = Array.isArray(propertiesByStatusQuery.data)
-    ? propertiesByStatusQuery.data.reduce((sum, row) => sum + (Number(row.count) || 0), 0)
+    ? propertiesByStatusQuery.data.reduce((sum, row) => sum + (Number(row.total) || 0), 0)
     : undefined;
 
   const insightsLoading =
-    overviewQuery.isLoading || complaintsByCategoryQuery.isLoading || propertiesByStatusQuery.isLoading;
+    overviewQuery.isLoading ||
+    complaintsByCategoryQuery.isLoading ||
+    propertiesByStatusQuery.isLoading ||
+    topPropertiesQuery.isLoading;
   const insights = computeInsights({
     overview: overviewQuery.data,
     categories: complaintsByCategoryQuery.data,
     statuses: propertiesByStatusQuery.data,
-    recentComplaints: recentComplaintsQuery.data,
+    topProperties: topPropertiesQuery.data,
   });
 
   return (
@@ -446,15 +494,18 @@ export default function Dashboard() {
               <SectionEmpty label="Not enough data yet to generate insights." />
             ) : (
               <ul className="grid grid-cols-1 gap-2 md:grid-cols-2">
-                {insights.map((insight) => (
-                  <li
-                    key={insight.id}
-                    className="flex items-start gap-2 rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground"
-                  >
-                    <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
-                    <span>{insight.text}</span>
-                  </li>
-                ))}
+                {insights.map((insight) => {
+                  const InsightIcon = insight.icon || Sparkles;
+                  return (
+                    <li
+                      key={insight.id}
+                      className="flex items-start gap-2 rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground"
+                    >
+                      <InsightIcon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+                      <span>{insight.text}</span>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </CardContent>
@@ -481,7 +532,7 @@ export default function Dashboard() {
                 emptyLabel="No complaint data yet."
               >
                 {(data) => (
-                  <OverviewChart data={data} xKey="category" yKey="count" color="#f59e0b" />
+                  <OverviewChart data={data} xKey="category" yKey="total" color="#f59e0b" />
                 )}
               </QuerySection>
             </CardContent>
@@ -506,7 +557,7 @@ export default function Dashboard() {
                 emptyLabel="No property data yet."
               >
                 {(data) => (
-                  <OverviewChart data={data} xKey="status" yKey="count" color="#8b5cf6" />
+                  <OverviewChart data={data} xKey="status" yKey="total" color="#8b5cf6" />
                 )}
               </QuerySection>
             </CardContent>

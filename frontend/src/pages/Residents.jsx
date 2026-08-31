@@ -17,11 +17,18 @@ import {
 // NOTE: adjust these import paths if useResidents / useProperties live
 // somewhere else in your project (e.g. a shared hooks barrel) — only the
 // hook names and React Query contract (data / isLoading / isError / error)
-// are assumed here, not the file location.
-import { useResidents } from "@/hooks/useResidents";
+// are assumed here, not the file location. Nothing about these hooks is
+// modified.
+import {
+  useResidents,
+  useCreateResident,
+  useUpdateResident,
+  useDeleteResident,
+  useAssignResidentProperty,
+} from "@/hooks/useResidents";
 import { useProperties } from "@/hooks/useProperties";
 
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -60,7 +67,11 @@ import {
 } from "@/components/ui/select";
 
 /* ------------------------------------------------------------------ */
-/* Helpers — all shape-detection, nothing hardcoded to a specific API  */
+/* Helpers                                                              */
+/*                                                                      */
+/* Confirmed /api/residents/ response shape:                           */
+/*   { resident_id, name, phone, email, gender, status, registered_at } */
+/* Field access below is direct — no shape-detection needed anymore.    */
 /* ------------------------------------------------------------------ */
 
 function detectField(row, pattern, exclude) {
@@ -86,10 +97,10 @@ function getInitials(value) {
 
 function statusBadgeVariant(value) {
   const normalized = String(value ?? "").toLowerCase();
-  if (/active|approved|current|occupied/.test(normalized)) return "default";
-  if (/pending|review/.test(normalized)) return "secondary";
-  if (/inactive|rejected|vacant|terminated|suspended/.test(normalized)) return "destructive";
-  return "outline";
+  if (/^active$/.test(normalized)) return "success";
+  if (/^inactive$/.test(normalized)) return "destructive";
+  if (/pending|review/.test(normalized)) return "warning";
+  return "secondary";
 }
 
 /* ------------------------------------------------------------------ */
@@ -124,7 +135,8 @@ function SectionEmpty({ label = "No residents found." }) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Create / Edit form dialog (shared)                                  */
+/* Create / Edit form dialog (shared) — styled to match Properties'    */
+/* PropertyForm dialog layout.                                         */
 /* ------------------------------------------------------------------ */
 
 function ResidentFormDialog({
@@ -151,18 +163,19 @@ function ResidentFormDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
-        <form onSubmit={handleSubmit}>
-          <DialogHeader>
-            <DialogTitle>{title}</DialogTitle>
-            <DialogDescription>{description}</DialogDescription>
-          </DialogHeader>
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
 
-          <div className="grid gap-4 py-4">
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <div className="grid gap-4 sm:grid-cols-2">
             {fields.map((field) => (
-              <div key={field.key} className="grid gap-1.5">
-                <Label htmlFor={field.key} className="capitalize">
-                  {field.label}
-                </Label>
+              <div
+                key={field.key}
+                className={`flex flex-col gap-1.5 ${field.fullWidth ? "sm:col-span-2" : ""}`}
+              >
+                <Label htmlFor={field.key}>{field.label}</Label>
                 <Input
                   id={field.key}
                   type={field.type || "text"}
@@ -197,18 +210,18 @@ function DeleteResidentDialog({ resident, onOpenChange, onConfirm, displayName }
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Delete resident</DialogTitle>
-          <DialogDescription>
-            This will permanently remove{" "}
-            <span className="font-medium text-foreground">{displayName}</span> from your
-            records. This action cannot be undone.
-          </DialogDescription>
         </DialogHeader>
+        <p className="text-sm text-muted-foreground">
+          Are you sure you want to delete{" "}
+          <span className="font-medium text-foreground">{displayName}</span>? This action
+          cannot be undone.
+        </p>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button variant="destructive" onClick={() => onConfirm(resident)}>
-            Delete resident
+          <Button type="button" variant="destructive" onClick={() => onConfirm(resident)}>
+            Delete
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -218,6 +231,15 @@ function DeleteResidentDialog({ resident, onOpenChange, onConfirm, displayName }
 
 /* ------------------------------------------------------------------ */
 /* Assign property dialog                                              */
+/*                                                                      */
+/* This remains a separate operation backed by the Properties API,     */
+/* which is unaffected by the Residents data-contract correction.      */
+/*                                                                      */
+/* IMPORTANT: this dialog intentionally uses a native <select> instead  */
+/* of the shared Base UI <Select> component. Base UI Select inside a    */
+/* Dialog previously caused dropdown flicker in this project — this is  */
+/* a deliberate workaround, not an oversight, and shared select.tsx is  */
+/* left untouched.                                                      */
 /* ------------------------------------------------------------------ */
 
 function AssignPropertyDialog({
@@ -227,12 +249,12 @@ function AssignPropertyDialog({
   onOpenChange,
   onConfirm,
   displayName,
+  errorMessage,
 }) {
   const [selectedId, setSelectedId] = useState("");
 
-  const firstProperty = Array.isArray(properties) && properties.length > 0 ? properties[0] : null;
-  const propertyIdField = detectField(firstProperty, /^id$/i) || "id";
-  const propertyNameField = detectField(firstProperty, /name/i) || "name";
+  const propertyIdField = "property_id";
+  const propertyNumberField = "property_number";
 
   return (
     <Dialog open={!!resident} onOpenChange={onOpenChange}>
@@ -245,7 +267,7 @@ function AssignPropertyDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="py-4">
+        <div className="py-2">
           {propertiesQuery.isLoading ? (
             <SectionLoading />
           ) : propertiesQuery.isError ? (
@@ -254,31 +276,41 @@ function AssignPropertyDialog({
             <SectionEmpty label="No properties available to assign." />
           ) : (
             <div className="grid gap-1.5">
-              <Label>Property</Label>
-              <Select value={selectedId} onValueChange={setSelectedId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select a property" />
-                </SelectTrigger>
-                <SelectContent>
-                  {properties.map((property) => (
-                    <SelectItem
-                      key={property[propertyIdField]}
-                      value={String(property[propertyIdField])}
-                    >
-                      {formatCellValue(property[propertyNameField])}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label htmlFor="assign-property-select">Property</Label>
+              <select
+                id="assign-property-select"
+                value={selectedId}
+                onChange={(e) => setSelectedId(e.target.value)}
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <option value="" disabled>
+                  Select a property
+                </option>
+                {properties.map((property) => (
+                  <option
+                    key={property[propertyIdField]}
+                    value={String(property[propertyIdField])}
+                  >
+                    {formatCellValue(property[propertyNumberField])}
+                  </option>
+                ))}
+              </select>
             </div>
           )}
         </div>
-
+        {errorMessage && (
+          <div
+            role="alert"
+            className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
+          >
+            {errorMessage}
+          </div>
+          )}
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button disabled={!selectedId} onClick={() => onConfirm(resident, selectedId)}>
+          <Button type="button" disabled={!selectedId} onClick={() => onConfirm(resident, selectedId)}>
             Assign property
           </Button>
         </DialogFooter>
@@ -288,10 +320,35 @@ function AssignPropertyDialog({
 }
 
 /* ------------------------------------------------------------------ */
+/* Shared stat card — matches Properties' StatCard exactly             */
+/* ------------------------------------------------------------------ */
+
+function StatCard({ icon, label, value, loading }) {
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+        <CardTitle className="text-sm font-medium text-muted-foreground">{label}</CardTitle>
+        <span className="text-muted-foreground">{icon}</span>
+      </CardHeader>
+      <CardContent>
+        <div className="text-2xl font-semibold">
+          {loading ? <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /> : value}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Main page                                                            */
 /* ------------------------------------------------------------------ */
 
 export default function Residents() {
+  const createResidentMutation = useCreateResident();
+  const updateResidentMutation = useUpdateResident();
+  const deleteResidentMutation = useDeleteResident();
+  const assignResidentPropertyMutation = useAssignResidentProperty();
+
   const residentsQuery = useResidents();
   const propertiesQuery = useProperties();
 
@@ -302,237 +359,250 @@ export default function Residents() {
   const [editResident, setEditResident] = useState(null);
   const [deleteResident, setDeleteResident] = useState(null);
   const [assignResident, setAssignResident] = useState(null);
+  const [assignError, setAssignError] = useState("");
 
-  const residents = residentsQuery.data;
-  const firstRow = Array.isArray(residents) && residents.length > 0 ? residents[0] : null;
-
-  const nameField = detectField(firstRow, /name/i, /propert|estate|unit/i) || "name";
-  const emailField = detectField(firstRow, /email/i) || "email";
-  const phoneField = detectField(firstRow, /phone|mobile|contact/i) || "phone";
-  const statusField = detectField(firstRow, /status/i);
-  const propertyField = detectField(firstRow, /propert|unit|estate/i);
-
-  const columns = firstRow ? Object.keys(firstRow) : [];
+  const residents = Array.isArray(residentsQuery.data) ? residentsQuery.data : [];
 
   const statusOptions = useMemo(() => {
-    if (!Array.isArray(residents) || !statusField) return [];
-    return Array.from(new Set(residents.map((row) => row[statusField]).filter(Boolean)));
-  }, [residents, statusField]);
+    return Array.from(new Set(residents.map((row) => row.status).filter(Boolean)));
+  }, [residents]);
 
   const filteredResidents = useMemo(() => {
-    if (!Array.isArray(residents)) return [];
     return residents.filter((row) => {
-      const matchesStatus =
-        statusFilter === "all" || !statusField || row[statusField] === statusFilter;
+      const matchesStatus = statusFilter === "all" || row.status === statusFilter;
       if (!matchesStatus) return false;
       if (!search.trim()) return true;
       const term = search.trim().toLowerCase();
-      return Object.values(row).some(
+      const searchable = [row.name, row.email, row.phone, row.gender, row.status];
+      return searchable.some(
         (value) => typeof value === "string" && value.toLowerCase().includes(term)
       );
     });
-  }, [residents, search, statusFilter, statusField]);
+  }, [residents, search, statusFilter]);
 
-  const totalResidents = Array.isArray(residents) ? residents.length : undefined;
-  const assignedCount =
-    propertyField && Array.isArray(residents)
-      ? residents.filter((row) => row[propertyField]).length
-      : undefined;
-  const unassignedCount =
-    totalResidents !== undefined && assignedCount !== undefined
-      ? totalResidents - assignedCount
-      : undefined;
-  const topStatus = useMemo(() => {
-    if (!statusField || !Array.isArray(residents) || residents.length === 0) return undefined;
-    const counts = {};
-    residents.forEach((row) => {
-      const value = row[statusField];
-      if (!value) return;
-      counts[value] = (counts[value] || 0) + 1;
-    });
-    const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-    return entries[0];
-  }, [residents, statusField]);
+  const hasActiveFilters = search.trim() !== "" || statusFilter !== "all";
+
+  const clearFilters = () => {
+    setSearch("");
+    setStatusFilter("all");
+  };
+
+  const totalResidents = residents.length;
+  const activeCount = residents.filter((row) => /^active$/i.test(String(row.status ?? ""))).length;
+  const inactiveCount = residents.filter((row) => /^inactive$/i.test(String(row.status ?? ""))).length;
+
+  const genderBreakdown = useMemo(() => {
+    const male = residents.filter((row) => /^male$/i.test(String(row.gender ?? ""))).length;
+    const female = residents.filter((row) => /^female$/i.test(String(row.gender ?? ""))).length;
+    return { male, female };
+  }, [residents]);
 
   /* ---------------------------------------------------------------- */
   /* Stub mutation handlers.                                           */
   /* useCreateResident / useUpdateResident / useDeleteResident /       */
   /* useAssignResidentProperty do not exist yet. Per instructions,     */
-  /* these are stubbed rather than invented — swap each body for a     */
+  /* these remain stubbed rather than invented — swap each body for a  */
   /* real mutation call (e.g. `const { mutate } = useCreateResident()`)*/
   /* once those hooks are added.                                       */
   /* ---------------------------------------------------------------- */
 
-  function handleCreateResident(formValues) {
-    // TODO: wire to useCreateResident() once available
-    console.warn("useCreateResident() not implemented yet — submitted values:", formValues);
-    setCreateOpen(false);
+  async function handleCreateResident(formValues) {
+    try {
+      await createResidentMutation.mutateAsync(formValues);
+      setCreateOpen(false);
+    } catch (error) {
+      console.error(
+        "Failed to create resident:",
+        error?.response?.data || error
+      );
+    }
   }
 
-  function handleUpdateResident(formValues) {
-    // TODO: wire to useUpdateResident() once available
-    console.warn("useUpdateResident() not implemented yet — submitted values:", formValues);
-    setEditResident(null);
+  async function handleUpdateResident(formValues) {
+    if (!editResident) return;
+
+    try {
+      await updateResidentMutation.mutateAsync({
+        residentId: editResident.resident_id,
+        data: {
+          name: formValues.name,
+          email: formValues.email,
+          phone: formValues.phone,
+          gender: formValues.gender,
+          status: formValues.status,
+        },
+      });
+
+      setEditResident(null);
+    } catch (error) {
+      console.error(
+        "Failed to update resident:",
+        error?.response?.data || error
+      );
+    }
   }
 
-  function handleConfirmDelete(resident) {
-    // TODO: wire to useDeleteResident() once available
-    console.warn("useDeleteResident() not implemented yet — target:", resident);
-    setDeleteResident(null);
+  async function handleConfirmDelete(resident) {
+    if (!resident) return;
+
+    try {
+      await deleteResidentMutation.mutateAsync(
+        resident.resident_id
+      );
+
+      setDeleteResident(null);
+    } catch (error) {
+      console.error(
+        "Failed to delete resident:",
+        error?.response?.data || error
+      );
+    }
   }
 
-  function handleConfirmAssign(resident, propertyId) {
-    // TODO: wire to useAssignResidentProperty() once available
-    console.warn(
-      "useAssignResidentProperty() not implemented yet —",
-      resident,
-      "-> property:",
-      propertyId
-    );
-    setAssignResident(null);
+  async function handleConfirmAssign(resident, propertyId) {
+    if (!resident || !propertyId) return;
+
+    setAssignError("");
+
+    try {
+      const result = await assignResidentPropertyMutation.mutateAsync({
+        resident_id: resident.resident_id,
+        property_id: propertyId,
+      });
+
+      console.log("ASSIGN SUCCESS:", result);
+      setAssignResident(null);
+    } catch (error) {
+      const message =
+        error?.response?.data?.error ||
+        error?.message ||
+        "Failed to assign property.";
+
+      setAssignError(message);
+    }
   }
 
   const formFields = [
-    { key: nameField, label: "Full name", required: true, placeholder: "Jane Doe" },
-    { key: emailField, label: "Email", type: "email", required: true, placeholder: "jane@example.com" },
-    { key: phoneField, label: "Phone", placeholder: "+1 555 000 0000" },
+    {
+      key: "name",
+      label: "Full name",
+      required: true,
+      placeholder: "Jane Doe",
+      fullWidth: true,
+    },
+    {
+      key: "email",
+      label: "Email",
+      type: "email",
+      required: true,
+      placeholder: "jane@example.com",
+    },
+    {
+      key: "phone",
+      label: "Phone",
+      required: true,
+      placeholder: "08012345678",
+    },
+    {
+      key: "gender",
+      label: "Gender",
+      required: true,
+      placeholder: "Male or Female",
+    },
+    {
+      key: "status",
+      label: "Status",
+      required: true,
+      placeholder: "Active or Inactive",
+    },
   ];
 
-  const displayName = (resident) => (resident ? formatCellValue(resident[nameField]) : "");
+  const displayName = (resident) => (resident ? formatCellValue(resident.name) : "");
 
   return (
-    <div className="flex flex-col gap-6 pb-10">
+    <div className="flex flex-col gap-6 p-4 sm:p-6 lg:p-8">
       {/* Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Residents</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Residents</h1>
           <p className="text-sm text-muted-foreground">
-            Manage resident records, statuses, and property assignments.
+            Manage resident records and their statuses across the estate.
           </p>
         </div>
-        <Button className="gap-2 self-start sm:self-auto" onClick={() => setCreateOpen(true)}>
+        <Button onClick={() => setCreateOpen(true)} className="gap-2 w-full sm:w-auto">
           <Plus className="h-4 w-4" />
           Add resident
         </Button>
       </div>
 
-      {/* Statistics cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Card>
-          <CardContent className="flex items-center justify-between gap-4 p-6">
-            <div>
-              <p className="text-sm text-muted-foreground">Total residents</p>
-              <div className="mt-1 text-2xl font-semibold text-foreground">
-                {residentsQuery.isLoading ? (
-                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                ) : (
-                  formatCellValue(totalResidents)
-                )}
-              </div>
-            </div>
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400">
-              <Users className="h-5 w-5" strokeWidth={1.75} />
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="flex items-center justify-between gap-4 p-6">
-            <div>
-              <p className="text-sm text-muted-foreground">Assigned to property</p>
-              <div className="mt-1 text-2xl font-semibold text-foreground">
-                {residentsQuery.isLoading ? (
-                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                ) : (
-                  formatCellValue(assignedCount)
-                )}
-              </div>
-            </div>
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-              <UserCheck className="h-5 w-5" strokeWidth={1.75} />
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="flex items-center justify-between gap-4 p-6">
-            <div>
-              <p className="text-sm text-muted-foreground">Unassigned</p>
-              <div className="mt-1 text-2xl font-semibold text-foreground">
-                {residentsQuery.isLoading ? (
-                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                ) : (
-                  formatCellValue(unassignedCount)
-                )}
-              </div>
-            </div>
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400">
-              <UserX className="h-5 w-5" strokeWidth={1.75} />
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="flex items-center justify-between gap-4 p-6">
-            <div className="min-w-0">
-              <p className="text-sm text-muted-foreground">Most common status</p>
-              <div className="mt-1 truncate text-lg font-semibold text-foreground">
-                {residentsQuery.isLoading ? (
-                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                ) : topStatus ? (
-                  <span className="flex items-center gap-2">
-                    <Badge variant={statusBadgeVariant(topStatus[0])}>{topStatus[0]}</Badge>
-                    <span className="text-sm font-normal text-muted-foreground">
-                      {topStatus[1]}
-                    </span>
-                  </span>
-                ) : (
-                  "—"
-                )}
-              </div>
-            </div>
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-violet-500/10 text-violet-600 dark:text-violet-400">
-              <UserCheck className="h-5 w-5" strokeWidth={1.75} />
-            </div>
-          </CardContent>
-        </Card>
+      {/* Stats */}
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <StatCard
+          icon={<Users className="h-4 w-4" />}
+          label="Total residents"
+          value={formatCellValue(totalResidents)}
+          loading={residentsQuery.isLoading}
+        />
+        <StatCard
+          icon={<UserCheck className="h-4 w-4" />}
+          label="Active"
+          value={formatCellValue(activeCount)}
+          loading={residentsQuery.isLoading}
+        />
+        <StatCard
+          icon={<UserX className="h-4 w-4" />}
+          label="Inactive"
+          value={formatCellValue(inactiveCount)}
+          loading={residentsQuery.isLoading}
+        />
+        <StatCard
+          icon={<Users className="h-4 w-4" />}
+          label="Male / Female"
+          value={`${genderBreakdown.male} / ${genderBreakdown.female}`}
+          loading={residentsQuery.isLoading}
+        />
       </div>
 
-      {/* Table card */}
+      {/* Filters */}
       <Card>
-        <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <CardTitle>All residents</CardTitle>
-            <CardDescription>Search, filter, and manage resident records.</CardDescription>
+        <CardContent className="flex flex-col gap-3 pt-6 sm:flex-row sm:items-center">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search by name, email, phone, gender, or status..."
+              className="pl-9"
+            />
           </div>
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search residents..."
-                className="w-full pl-8 sm:w-64"
-              />
-            </div>
-            {statusOptions.length > 0 && (
-              <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger className="w-full sm:w-40">
-                  <SelectValue placeholder="Status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All statuses</SelectItem>
-                  {statusOptions.map((status) => (
-                    <SelectItem key={status} value={status}>
-                      {status}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-          </div>
-        </CardHeader>
-        <CardContent className="overflow-x-auto">
+
+          {statusOptions.length > 0 && (
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger className="w-full sm:w-44">
+                <SelectValue placeholder="Status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All statuses</SelectItem>
+                {statusOptions.map((status) => (
+                  <SelectItem key={status} value={status}>
+                    {status}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+
+          {hasActiveFilters && (
+            <Button variant="ghost" onClick={clearFilters}>
+              Clear filters
+            </Button>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Table */}
+      <Card>
+        <CardContent className="p-0">
           {residentsQuery.isLoading ? (
             <SectionLoading />
           ) : residentsQuery.isError ? (
@@ -540,8 +610,8 @@ export default function Residents() {
           ) : filteredResidents.length === 0 ? (
             <SectionEmpty
               label={
-                search || statusFilter !== "all"
-                  ? "No residents match your search or filter."
+                hasActiveFilters
+                  ? "No residents match your search or filters."
                   : "No residents found."
               }
             />
@@ -549,53 +619,47 @@ export default function Residents() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  {columns.map((column) => (
-                    <TableHead key={column} className="whitespace-nowrap capitalize">
-                      {column.replace(/_/g, " ")}
-                    </TableHead>
-                  ))}
-                  <TableHead className="w-12 text-right">Actions</TableHead>
+                  <TableHead>Resident</TableHead>
+                  <TableHead className="hidden md:table-cell">Email</TableHead>
+                  <TableHead className="hidden sm:table-cell">Phone</TableHead>
+                  <TableHead className="hidden lg:table-cell">Gender</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="w-10">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filteredResidents.map((row, index) => (
-                  <TableRow key={row.id ?? index}>
-                    {columns.map((column) => {
-                      const value = row[column];
-                      const isStatusColumn = column === statusField;
-                      const isNameColumn = column === nameField && typeof value === "string";
-
-                      if (isNameColumn) {
-                        return (
-                          <TableCell key={column} className="whitespace-nowrap">
-                            <div className="flex items-center gap-2">
-                              <Avatar className="h-7 w-7">
-                                <AvatarFallback className="text-xs">
-                                  {getInitials(value)}
-                                </AvatarFallback>
-                              </Avatar>
-                              <span className="font-medium text-foreground">{value}</span>
-                            </div>
-                          </TableCell>
-                        );
-                      }
-
-                      return (
-                        <TableCell key={column} className="whitespace-nowrap">
-                          {isStatusColumn ? (
-                            <Badge variant={statusBadgeVariant(value)}>
-                              {formatCellValue(value)}
-                            </Badge>
-                          ) : (
-                            formatCellValue(value)
-                          )}
-                        </TableCell>
-                      );
-                    })}
-                    <TableCell className="text-right">
+                  <TableRow key={row.resident_id ?? index}>
+                    <TableCell className="whitespace-nowrap">
+                      <div className="flex items-center gap-2">
+                        <Avatar className="h-7 w-7">
+                          <AvatarFallback className="text-xs">
+                            {getInitials(typeof row.name === "string" ? row.name : "")}
+                          </AvatarFallback>
+                        </Avatar>
+                        <span className="font-medium text-foreground">
+                          {formatCellValue(row.name)}
+                        </span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell">
+                      {formatCellValue(row.email)}
+                    </TableCell>
+                    <TableCell className="hidden sm:table-cell">
+                      {formatCellValue(row.phone)}
+                    </TableCell>
+                    <TableCell className="hidden lg:table-cell">
+                      {formatCellValue(row.gender)}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={statusBadgeVariant(row.status)}>
+                        {formatCellValue(row.status)}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-8 w-8">
+                          <Button variant="ghost" size="icon">
                             <MoreHorizontal className="h-4 w-4" />
                           </Button>
                         </DropdownMenuTrigger>
@@ -635,7 +699,13 @@ export default function Residents() {
         onOpenChange={setCreateOpen}
         title="Add resident"
         description="Enter the resident's details below."
-        initialValues={{ [nameField]: "", [emailField]: "", [phoneField]: "" }}
+        initialValues={{
+          name: "",
+          email: "",
+          phone: "",
+          gender: "",
+        }}
+
         fields={formFields}
         onSubmit={handleCreateResident}
         submitLabel="Create resident"
@@ -645,15 +715,17 @@ export default function Residents() {
           no useEffect is needed to sync initial form values. */}
       {editResident && (
         <ResidentFormDialog
-          key={editResident.id ?? displayName(editResident)}
+          key={editResident.resident_id ?? displayName(editResident)}
           open={!!editResident}
           onOpenChange={(open) => !open && setEditResident(null)}
           title="Edit resident"
           description={`Update details for ${displayName(editResident)}.`}
           initialValues={{
-            [nameField]: editResident[nameField] ?? "",
-            [emailField]: editResident[emailField] ?? "",
-            [phoneField]: editResident[phoneField] ?? "",
+            name: editResident.name ?? "",
+            email: editResident.email ?? "",
+            phone: editResident.phone ?? "",
+            gender: editResident.gender ?? "",
+            status: editResident.status ?? "",
           }}
           fields={formFields}
           onSubmit={(values) => handleUpdateResident({ ...editResident, ...values })}
@@ -675,7 +747,13 @@ export default function Residents() {
         properties={propertiesQuery.data}
         propertiesQuery={propertiesQuery}
         displayName={displayName(assignResident)}
-        onOpenChange={(open) => !open && setAssignResident(null)}
+        errorMessage={assignError}
+        onOpenChange={(open) => {
+          if (!open) {
+            setAssignResident(null);
+            setAssignError("");
+          }
+        }}
         onConfirm={handleConfirmAssign}
       />
     </div>

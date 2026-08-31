@@ -8,7 +8,9 @@ from .views import (
     ComplaintDetailView,
     ResidentListView,
     ResidentDetailView,
-    MyProfileView
+    MyProfileView,
+    NotificationListView,
+    NotificationReadView,
 )
 
 urlpatterns = [
@@ -20,7 +22,10 @@ urlpatterns = [
     path("complaints/", ComplaintListCreateView.as_view(), name="complaints"),
     path("complaints/<int:pk>/", ComplaintDetailView.as_view(), name="complaint-detail"),
     
-path("residents/", ResidentListView.as_view(), name="resident-list"),
+    path("residents/", ResidentListView.as_view(), name="resident-list"),
     path("residents/<int:pk>/", ResidentDetailView.as_view(), name="resident-detail"),
     path("my-profile/", MyProfileView.as_view(), name="my-profile"),
+    
+    path("notifications/", NotificationListView.as_view(), name="notifications"),
+    path("notifications/<int:pk>/read/",NotificationReadView.as_view(),name="notification-read",),
 ]

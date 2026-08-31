@@ -1,10 +1,24 @@
 #from django import db
 import email
+import re
+
+from django.contrib.auth.models import User
 
 from django import db
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+
+from dashboard.permissions import (
+    IsResident,
+    IsManager,
+    IsAdmin,
+    IsManagerOrAdmin,
+)
+
+from dashboard.models import Profile, Notification
+from dashboard.notification_service import create_notification
+
 
 import json
 from django.http import JsonResponse
@@ -17,7 +31,7 @@ from .ai_service import (
     ask_llm, 
     detect_ai_intent, 
     generate_cypher,
-    explain_results,
+    analyze_results,
     )
 
 from .graph_service import (
@@ -601,6 +615,131 @@ def delete_resident(request, resident_id):
         },
         status=200,
     )
+    
+    
+@api_view(["POST"])
+@permission_classes([IsManagerOrAdmin])
+def link_resident_account(request):
+
+    user_id = request.data.get("user_id")
+    resident_id = request.data.get("resident_id", "").strip()
+
+    if not user_id or not resident_id:
+        return Response(
+            {
+                "error": "User ID and Resident ID are required."
+            },
+            status=400,
+        )
+
+    # ----------------------------------------------------------
+    # Get Django user
+    # ----------------------------------------------------------
+
+    try:
+        user = User.objects.get(id=user_id)
+    except User.DoesNotExist:
+        return Response(
+            {
+                "error": "Django user not found."
+            },
+            status=404,
+        )
+
+    # ----------------------------------------------------------
+    # Get user's profile
+    # ----------------------------------------------------------
+
+    profile, _ = Profile.objects.get_or_create(
+        user=user
+    )
+
+    # ----------------------------------------------------------
+    # Only resident accounts can be linked
+    # ----------------------------------------------------------
+
+    if profile.role != "resident":
+        return Response(
+            {
+                "error": "Only resident accounts can be linked to resident records."
+            },
+            status=400,
+        )
+
+    # ----------------------------------------------------------
+    # Verify Neo4j resident exists
+    # ----------------------------------------------------------
+
+    db = Neo4jConnection()
+
+    try:
+
+        resident_query = """
+        MATCH (r:Resident {resident_id: $resident_id})
+        RETURN
+            r.resident_id AS resident_id,
+            r.name AS resident_name
+        LIMIT 1
+        """
+
+        resident = db.query(
+            resident_query,
+            {
+                "resident_id": resident_id
+            }
+        )
+
+        if not resident:
+            return Response(
+                {
+                    "error": "Resident record not found."
+                },
+                status=404,
+            )
+
+        # ------------------------------------------------------
+        # Prevent resident record from being linked to another
+        # Django account
+        # ------------------------------------------------------
+
+        existing_link = Profile.objects.filter(
+            resident_id=resident_id
+        ).exclude(
+            user=user
+        ).first()
+
+        if existing_link:
+            return Response(
+                {
+                    "error": (
+                        "This resident record is already linked "
+                        "to another account."
+                    )
+                },
+                status=400,
+            )
+
+        # ------------------------------------------------------
+        # Link account
+        # ------------------------------------------------------
+
+        profile.resident_id = resident_id
+        profile.save(update_fields=["resident_id"])
+
+        return Response(
+            {
+                "message": "Resident account linked successfully.",
+                "user": {
+                    "id": user.id,
+                    "username": user.username,
+                },
+                "resident": resident[0],
+            },
+            status=200,
+        )
+
+    finally:
+        db.close()
 
 
 @api_view(["GET"])
@@ -609,6 +748,8 @@ def get_properties(request):
 
     query = """
     MATCH (e:Estate)-[:HAS_PROPERTY]->(p:Property)
+
+    OPTIONAL MATCH (r:Resident)-[:LIVES_IN]->(p)
 
     RETURN
         p.property_id AS property_id,
@@ -620,7 +761,7 @@ def get_properties(request):
 
         e.estate_id AS estate_id,
         e.name AS estate_name,
-        
+
         r.resident_id AS resident_id,
         r.name AS resident_name,
 
@@ -1060,14 +1201,60 @@ def create_complaint(request):
 
     data = request.data
 
-    resident_id = data.get("resident_id", "").strip()
-    property_id = data.get("property_id", "").strip()
+    role = getattr(
+        getattr(request.user, "profile", None),
+        "role",
+        None,
+    )
 
-    title = data.get("title", "").strip()
-    description = data.get("description", "").strip()
-    category = data.get("category", "").strip()
-    priority = data.get("priority", "").strip()
+    resident_id = data.get(
+        "resident_id",
+        ""
+    ).strip()
 
+    property_id = data.get(
+        "property_id",
+        ""
+    ).strip()
+
+    title = data.get(
+        "title",
+        ""
+    ).strip()
+
+    description = data.get(
+        "description",
+        ""
+    ).strip()
+
+    category = data.get(
+        "category",
+        ""
+    ).strip()
+
+    priority = data.get(
+        "priority",
+        ""
+    ).strip()
+
+    # Residents can only create complaints for themselves.
+    # Managers/admins can select a resident.
+    if role == "resident":
+
+        resident_id = request.user.profile.resident_id
+
+        if not resident_id:
+            return Response(
+                {
+                    "error": (
+                        "No resident profile is linked "
+                        "to this account."
+                    )
+                },
+                status=403,
+            )
+
+    # Validate required fields.
     if not all([
         resident_id,
         property_id,
@@ -1082,7 +1269,7 @@ def create_complaint(request):
             },
             status=400,
         )
-    
+
     allowed_categories = [
         "Electrical",
         "Plumbing",
@@ -1100,7 +1287,7 @@ def create_complaint(request):
             },
             status=400,
         )
-    
+
     allowed_priorities = [
         "Low",
         "Medium",
@@ -1114,245 +1301,563 @@ def create_complaint(request):
             },
             status=400,
         )
-    
+
     db = Neo4jConnection()
 
-    resident_query = """
-    MATCH (r:Resident {resident_id: $resident_id})
-    RETURN r
-    LIMIT 1
-    """
+    try:
 
-    resident = db.query(
-        resident_query,
-        {
-            "resident_id": resident_id
-        }
-    )
+        # ----------------------------------------------------------
+        # Verify resident exists
+        # ----------------------------------------------------------
 
-    if not resident:
-        db.close()
+        resident_query = """
+        MATCH (r:Resident {resident_id: $resident_id})
+        RETURN r
+        LIMIT 1
+        """
+
+        resident = db.query(
+            resident_query,
+            {
+                "resident_id": resident_id
+            }
+        )
+
+        if not resident:
+            return Response(
+                {
+                    "error": "Resident not found."
+                },
+                status=404,
+            )
+
+        # ----------------------------------------------------------
+        # Verify property exists
+        # ----------------------------------------------------------
+
+        property_query = """
+        MATCH (p:Property {property_id: $property_id})
+        RETURN p
+        LIMIT 1
+        """
+
+        property_node = db.query(
+            property_query,
+            {
+                "property_id": property_id
+            }
+        )
+
+        if not property_node:
+            return Response(
+                {
+                    "error": "Property not found."
+                },
+                status=404,
+            )
+
+        # ----------------------------------------------------------
+        # Generate complaint ID
+        # ----------------------------------------------------------
+
+        last_complaint_query = """
+        MATCH (c:Complaint)
+        RETURN c.complaint_id AS complaint_id
+        ORDER BY complaint_id DESC
+        LIMIT 1
+        """
+
+        last = db.query(
+            last_complaint_query
+        )
+
+        if last:
+            current_id = last[0]["complaint_id"]
+            number = int(
+                current_id.replace("C", "")
+            )
+            new_id = f"C{number + 1:03d}"
+        else:
+            new_id = "C001"
+
+        # ----------------------------------------------------------
+        # Create complaint
+        # ----------------------------------------------------------
+
+        create_query = """
+        MATCH (r:Resident {resident_id: $resident_id})
+        MATCH (p:Property {property_id: $property_id})
+
+        CREATE (c:Complaint {
+            complaint_id: $complaint_id,
+            title: $title,
+            description: $description,
+            category: $category,
+            priority: $priority,
+            status: "Open",
+            created_at: datetime()
+        })
+
+        CREATE (r)-[:RAISED]->(c)
+        CREATE (c)-[:ABOUT]->(p)
+
+        RETURN
+            c.complaint_id AS complaint_id,
+            c.title AS title,
+            c.description AS description,
+            c.category AS category,
+            c.priority AS priority,
+            c.status AS status,
+            toString(c.created_at) AS created_at
+        """
+
+        complaint = db.query(
+            create_query,
+            {
+                "resident_id": resident_id,
+                "property_id": property_id,
+                "complaint_id": new_id,
+                "title": title,
+                "description": description,
+                "category": category,
+                "priority": priority,
+            }
+        )
+        
+        # ----------------------------------------------------------
+        # Create notification for the resident
+        # ----------------------------------------------------------
+
+        if role == "resident":
+            Notification.objects.create(
+                user=request.user,
+                title="Complaint Submitted",
+                message=(
+                    f'Your complaint "{title}" has been submitted '
+                    f"successfully and is currently Open."
+                ),
+                notification_type="complaint",
+            )
+
         return Response(
             {
-                "error": "Resident not found."
+                "message": "Complaint created successfully.",
+                "complaint": complaint[0],
             },
-            status=404,
+            status=201,
         )
-    
-    property_query = """
-    MATCH (p:Property {property_id: $property_id})
-    RETURN p
-    LIMIT 1
-    """
 
-    property_node = db.query(
-        property_query,
-        {
-            "property_id": property_id
-        }
-    )
-
-    if not property_node:
+    finally:
         db.close()
-        return Response(
-            {
-                "error": "Property not found."
-            },
-            status=404,
-        )
-    
-    last_complaint_query = """
-    MATCH (c:Complaint)
-    RETURN c.complaint_id AS complaint_id
-    ORDER BY complaint_id DESC
-    LIMIT 1
-    """
-
-    last = db.query(last_complaint_query)
-
-    if last:
-        current_id = last[0]["complaint_id"]
-        number = int(current_id.replace("C", ""))
-        new_id = f"C{number + 1:03d}"
-    else:
-        new_id = "C001"
-
-    create_query = """
-    MATCH (r:Resident {resident_id: $resident_id})
-    MATCH (p:Property {property_id: $property_id})
-
-    CREATE (c:Complaint {
-        complaint_id: $complaint_id,
-        title: $title,
-        description: $description,
-        category: $category,
-        priority: $priority,
-        status: "Open",
-        created_at: datetime()
-    })
-
-    CREATE (r)-[:RAISED]->(c)
-    CREATE (c)-[:ABOUT]->(p)
-
-    RETURN
-        c.complaint_id AS complaint_id,
-        c.title AS title,
-        c.description AS description,
-        c.category AS category,
-        c.priority AS priority,
-        c.status AS status,
-        toString(c.created_at) AS created_at
-    """
-
-    complaint = db.query(
-        create_query,
-        {
-            "resident_id": resident_id,
-            "property_id": property_id,
-            "complaint_id": new_id,
-            "title": title,
-            "description": description,
-            "category": category,
-            "priority": priority,
-        }
-    )
-
-    db.close()
-
-    return Response(
-{
-    "message": "Complaint created successfully.",
-    "complaint": complaint[0]
-},
-status=201
-)
-
+        
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def get_complaints(request):
 
-    query = """
-    MATCH (r:Resident)-[:RAISED]->(c:Complaint)-[:ABOUT]->(p:Property)
+    role = getattr(
+        getattr(request.user, "profile", None),
+        "role",
+        None,
+    )
 
-    RETURN
-        c.complaint_id AS complaint_id,
-        r.name AS resident_name,
-        p.property_number AS property_number,
-        c.title AS title,
-        c.description AS description,
-        c.category AS category,
-        c.priority AS priority,
-        c.status AS status,
-        toString(c.created_at) AS created_at
+    if role in ["manager", "admin"]:
+        query = """
+        MATCH (r:Resident)-[:RAISED]->(c:Complaint)-[:ABOUT]->(p:Property)
 
-    ORDER BY c.created_at DESC
-    """
+        RETURN
+            c.complaint_id AS complaint_id,
+            r.resident_id AS resident_id,
+            r.name AS resident_name,
+            p.property_id AS property_id,
+            p.property_number AS property_number,
+            c.title AS title,
+            c.description AS description,
+            c.category AS category,
+            c.priority AS priority,
+            c.status AS status,
+            toString(c.created_at) AS created_at
+
+        ORDER BY c.created_at DESC
+        """
+
+        parameters = {}
+
+    elif role == "resident":
+        resident_id = request.user.profile.resident_id
+
+        if not resident_id:
+            return Response(
+                {
+                    "error": "No resident profile is linked to this account."
+                },
+                status=403,
+            )
+
+        query = """
+        MATCH (r:Resident {resident_id: $resident_id})
+            -[:RAISED]->(c:Complaint)-[:ABOUT]->(p:Property)
+
+        RETURN
+            c.complaint_id AS complaint_id,
+            r.resident_id AS resident_id,
+            r.name AS resident_name,
+            p.property_id AS property_id,
+            p.property_number AS property_number,
+            c.title AS title,
+            c.description AS description,
+            c.category AS category,
+            c.priority AS priority,
+            c.status AS status,
+            toString(c.created_at) AS created_at
+
+        ORDER BY c.created_at DESC
+        """
+
+        parameters = {
+            "resident_id": resident_id,
+        }
+    else:
+        return Response(
+            {"error": "Invalid user role."},
+            status=403,
+        )
 
     db = Neo4jConnection()
 
     try:
-        complaints = db.query(query)
+        complaints = db.query(
+            query,
+            parameters,
+        )
     finally:
         db.close()
 
     return Response(complaints)
 
 
-@api_view(["PUT"])
+@api_view(["GET"])
 @permission_classes([IsAuthenticated])
-def update_complaint(request, complaint_id):
+def global_search(request):
+    query_text = request.query_params.get("q", "").strip()
+
+    if not query_text:
+        return Response([])
 
     db = Neo4jConnection()
 
     query = """
-    MATCH (c:Complaint {complaint_id: $complaint_id})
+    CALL {
+        MATCH (r:Resident)
+        WHERE
+            toLower(coalesce(r.name, "")) CONTAINS toLower($q)
+            OR toLower(coalesce(r.email, "")) CONTAINS toLower($q)
+            OR toLower(coalesce(r.phone, "")) CONTAINS toLower($q)
+            OR toLower(coalesce(r.resident_id, "")) CONTAINS toLower($q)
+
+        OPTIONAL MATCH (r)-[:LIVES_IN]->(p:Property)
+        OPTIONAL MATCH (e:Estate)-[:HAS_PROPERTY]->(p)
+
+        RETURN
+            "Resident" AS type,
+            r.resident_id AS id,
+            r.name AS title,
+            coalesce(r.email, "") AS subtitle,
+            coalesce(e.name, "") AS related_estate,
+            coalesce(p.property_number, "") AS related_property,
+            "" AS related_resident
+
+        UNION ALL
+
+        MATCH (p:Property)
+        WHERE
+            toLower(coalesce(p.property_number, "")) CONTAINS toLower($q)
+            OR toLower(coalesce(p.property_type, "")) CONTAINS toLower($q)
+            OR toLower(coalesce(p.property_id, "")) CONTAINS toLower($q)
+
+        OPTIONAL MATCH (e:Estate)-[:HAS_PROPERTY]->(p)
+        OPTIONAL MATCH (r:Resident)-[:LIVES_IN]->(p)
+
+        RETURN
+            "Property" AS type,
+            p.property_id AS id,
+            p.property_number AS title,
+            p.property_type AS subtitle,
+            coalesce(e.name, "") AS related_estate,
+            "" AS related_property,
+            coalesce(r.name, "") AS related_resident
+
+        UNION ALL
+
+        MATCH (c:Complaint)
+        WHERE
+            toLower(coalesce(c.title, "")) CONTAINS toLower($q)
+            OR toLower(coalesce(c.category, "")) CONTAINS toLower($q)
+            OR toLower(coalesce(c.description, "")) CONTAINS toLower($q)
+            OR toLower(coalesce(c.complaint_id, "")) CONTAINS toLower($q)
+            OR toLower(coalesce(c.status, "")) CONTAINS toLower($q)
+
+        OPTIONAL MATCH (r:Resident)-[:RAISED]->(c)
+        OPTIONAL MATCH (c)-[:ABOUT]->(p:Property)
+
+        RETURN
+            "Complaint" AS type,
+            c.complaint_id AS id,
+            c.title AS title,
+            c.category AS subtitle,
+            "" AS related_estate,
+            coalesce(p.property_number, "") AS related_property,
+            coalesce(r.name, "") AS related_resident
+
+        UNION ALL
+
+        MATCH (e:Estate)
+        WHERE
+            toLower(coalesce(e.name, "")) CONTAINS toLower($q)
+            OR toLower(coalesce(e.estate_id, "")) CONTAINS toLower($q)
+            OR toLower(coalesce(e.address, "")) CONTAINS toLower($q)
+            OR toLower(coalesce(e.city, "")) CONTAINS toLower($q)
+            OR toLower(coalesce(e.state, "")) CONTAINS toLower($q)
+
+        RETURN
+            "Estate" AS type,
+            e.estate_id AS id,
+            e.name AS title,
+            coalesce(e.city, e.state, "") AS subtitle,
+            "" AS related_estate,
+            "" AS related_property,
+            "" AS related_resident
+
+        UNION ALL
+
+        MATCH (m:Manager)
+        WHERE
+            toLower(coalesce(m.name, "")) CONTAINS toLower($q)
+            OR toLower(coalesce(m.email, "")) CONTAINS toLower($q)
+            OR toLower(coalesce(m.phone, "")) CONTAINS toLower($q)
+            OR toLower(coalesce(m.manager_id, "")) CONTAINS toLower($q)
+
+        OPTIONAL MATCH (e:Estate)-[:HAS_MANAGER]->(m)
+
+        RETURN
+            "Manager" AS type,
+            m.manager_id AS id,
+            m.name AS title,
+            coalesce(m.email, "") AS subtitle,
+            coalesce(e.name, "") AS related_estate,
+            "" AS related_property,
+            "" AS related_resident
+
+        UNION ALL
+
+        MATCH (t:MaintenanceTeam)
+        WHERE
+            toLower(coalesce(t.team_name, "")) CONTAINS toLower($q)
+            OR toLower(coalesce(t.specialization, "")) CONTAINS toLower($q)
+            OR toLower(coalesce(t.email, "")) CONTAINS toLower($q)
+            OR toLower(coalesce(t.team_id, "")) CONTAINS toLower($q)
+
+        OPTIONAL MATCH (e:Estate)-[:HAS_MAINTENANCE_TEAM]->(t)
+
+        RETURN
+            "MaintenanceTeam" AS type,
+            t.team_id AS id,
+            t.team_name AS title,
+            coalesce(t.specialization, "") AS subtitle,
+            coalesce(e.name, "") AS related_estate,
+            "" AS related_property,
+            "" AS related_resident
+    }
 
     RETURN
-        c.complaint_id AS complaint_id,
-        c.title AS title,
-        c.description AS description,
-        c.category AS category,
-        c.priority AS priority,
-        c.status AS status,
-        toString(c.created_at) AS created_at
+        type,
+        id,
+        title,
+        subtitle,
+        related_estate,
+        related_property,
+        related_resident
+    LIMIT 30
     """
 
-    complaint = db.query(
-        query,
-        {
-            "complaint_id": complaint_id
-        }
-    )
-
-    if not complaint:
+    try:
+        results = db.query(query, {"q": query_text})
+    finally:
         db.close()
-        return Response(
+
+    return Response(results)
+
+
+
+@api_view(["PUT"])
+@permission_classes([IsManagerOrAdmin])
+def update_complaint(request, complaint_id):
+
+    db = Neo4jConnection()
+
+    try:
+
+        # ----------------------------------------------------------
+        # Get complaint and resident who raised it
+        # ----------------------------------------------------------
+
+        query = """
+        MATCH (r:Resident)-[:RAISED]->(c:Complaint {
+            complaint_id: $complaint_id
+        })
+
+        RETURN
+            r.resident_id AS resident_id,
+            c.complaint_id AS complaint_id,
+            c.title AS title,
+            c.description AS description,
+            c.category AS category,
+            c.priority AS priority,
+            c.status AS status,
+            toString(c.created_at) AS created_at
+        """
+
+        complaint = db.query(
+            query,
             {
-                "error": "Complaint not found."
-            },
-            status=404,
+                "complaint_id": complaint_id
+            }
         )
 
-    data = request.data
-    
-    status_value = request.data.get("status", "").strip()
+        if not complaint:
+            return Response(
+                {
+                    "error": "Complaint not found."
+                },
+                status=404,
+            )
 
-    allowed_status = [
-        "Open",
-        "In Progress",
-        "Resolved",
-    ]
+        complaint_data = complaint[0]
 
-    if status_value not in allowed_status:
-        db.close()
+        resident_id = complaint_data["resident_id"]
+        title = complaint_data["title"]
+        old_status = complaint_data["status"]
+
+        # ----------------------------------------------------------
+        # Validate new status
+        # ----------------------------------------------------------
+
+        status_value = request.data.get(
+            "status",
+            ""
+        ).strip()
+
+        allowed_status = [
+            "Open",
+            "In Progress",
+            "Resolved",
+        ]
+
+        if status_value not in allowed_status:
+            return Response(
+                {
+                    "error": "Invalid complaint status."
+                },
+                status=400,
+            )
+
+        # ----------------------------------------------------------
+        # Update complaint in Neo4j
+        # ----------------------------------------------------------
+
+        update_query = """
+        MATCH (c:Complaint {
+            complaint_id: $complaint_id
+        })
+
+        SET c.status = $status
+
+        FOREACH (
+            _ IN CASE
+                WHEN $status = "Resolved"
+                THEN [1]
+                ELSE []
+            END |
+            SET c.resolved_at = datetime()
+        )
+
+        RETURN
+            c.complaint_id AS complaint_id,
+            c.title AS title,
+            c.description AS description,
+            c.category AS category,
+            c.priority AS priority,
+            c.status AS status,
+            toString(c.created_at) AS created_at,
+            toString(c.resolved_at) AS resolved_at
+        """
+
+        updated = db.query(
+            update_query,
+            {
+                "complaint_id": complaint_id,
+                "status": status_value,
+            }
+        )
+
+        # ----------------------------------------------------------
+        # Create notification only when status actually changes
+        # ----------------------------------------------------------
+
+        if updated and old_status != status_value:
+
+            notification_messages = {
+                "Open": (
+                    f'Your complaint "{title}" '
+                    f'has been reopened and is currently Open.'
+                ),
+                "In Progress": (
+                    f'Your complaint "{title}" '
+                    f'is now In Progress.'
+                ),
+                "Resolved": (
+                    f'Your complaint "{title}" '
+                    f'has been marked as Resolved.'
+                ),
+            }
+
+            notification_titles = {
+                "Open": "Complaint Reopened",
+                "In Progress": "Complaint Status Updated",
+                "Resolved": "Complaint Resolved",
+            }
+
+            # Find the Django user linked to this Neo4j resident
+            try:
+                resident_profile = Profile.objects.get(
+                    resident_id=resident_id
+                )
+
+                Notification.objects.create(
+                    user=resident_profile.user,
+                    title=notification_titles[status_value],
+                    message=notification_messages[status_value],
+                    notification_type="complaint",
+                )
+
+            except Profile.DoesNotExist:
+                # The complaint remains successfully updated
+                # even if its resident has no Django profile.
+                pass
+
         return Response(
             {
-                "error": "Invalid complaint status."
+                "message": "Complaint updated successfully.",
+                "complaint": updated[0],
             },
-            status=400,
+            status=200,
         )
-    
-    update_query = """
-    MATCH (c:Complaint {complaint_id: $complaint_id})
 
-    SET c.status = $status
-    
-    FOREACH (_ IN CASE WHEN $status = "Resolved" THEN [1] ELSE [] END |
-        SET c.resolved_at = datetime()
-    )
-
-    RETURN
-        c.complaint_id AS complaint_id,
-        c.title AS title,
-        c.description AS description,
-        c.category AS category,
-        c.priority AS priority,
-        c.status AS status,
-        toString(c.created_at) AS created_at,
-        toString(c.resolved_at) AS resolved_at
-    """
-
-    updated = db.query(
-        update_query,
-        {
-            "complaint_id": complaint_id,
-            "status": status_value,
-        }
-    )
-
-    db.close()
-
-    return Response(
-    {
-        "message": "Complaint updated successfully.",
-        "complaint": updated[0]
-    },
-    status=200,
-    )
+    finally:
+        db.close()
     
 @api_view(["DELETE"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsManagerOrAdmin])
 def delete_complaint(request, complaint_id):
 
     db = Neo4jConnection()
@@ -2693,15 +3198,19 @@ def delete_maintenance_team(request, team_id):
         
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsManagerOrAdmin])
 def assign_property_to_resident(request):
-    
+
     print("Assign Property to Resident API called.")
 
     data = request.data
 
     resident_id = data.get("resident_id", "").strip()
     property_id = data.get("property_id", "").strip()
+
+    print("ASSIGN DEBUG:")
+    print("resident_id =", repr(resident_id))
+    print("property_id =", repr(property_id))
 
     if not all([resident_id, property_id]):
         return Response(
@@ -2785,17 +3294,26 @@ def assign_property_to_resident(request):
             },
         )
         
-        remove_existing_occupant_query = """
-        MATCH (:Resident)-[rel:LIVES_IN]->(p:Property {property_id:$property_id})
-        DELETE rel
+        existing_occupant_query = """
+        MATCH (r:Resident)-[:LIVES_IN]->(p:Property {property_id:$property_id})
+        RETURN r.name AS resident_name
+        LIMIT 1
         """
 
-        db.query(
-            remove_existing_occupant_query,
+        existing_occupant = db.query(
+            existing_occupant_query,
             {
-                "property_id": property_id,
-            },
+                "property_id": property_id
+            }
         )
+
+        if existing_occupant:
+            return Response(
+                {
+                    "error": f"Property is already occupied by {existing_occupant[0]['resident_name']}."
+                },
+                status=400,
+            )
         
 
         # Create relationship
@@ -2898,33 +3416,14 @@ def assign_property_to_complaint(request):
                 },
                 status=404,
             )
-
-        # Check if complaint is already linked to a property
-        existing_relationship = """
-        MATCH (c:Complaint {complaint_id:$complaint_id})-[r:ABOUT]->(:Property)
-        RETURN r
-        LIMIT 1
-        """
-
-        existing = db.query(
-            existing_relationship,
-            {
-                "complaint_id": complaint_id
-            }
-        )
-
-        if existing:
-            return Response(
-                {
-                    "error": "Complaint is already assigned to a property."
-                },
-                status=400,
-            )
-
+            
         # Create relationship
         assign_query = """
         MATCH (c:Complaint {complaint_id:$complaint_id})
         MATCH (p:Property {property_id:$property_id})
+
+        OPTIONAL MATCH (c)-[old:ABOUT]->(:Property)
+        DELETE old
 
         CREATE (c)-[:ABOUT]->(p)
 
@@ -2954,7 +3453,7 @@ def assign_property_to_complaint(request):
         db.close()
         
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsManagerOrAdmin])
 def assign_complaint_to_team(request):
 
     data = request.data
@@ -2976,8 +3475,11 @@ def assign_complaint_to_team(request):
 
         # Check complaint exists
         complaint_query = """
-        MATCH (c:Complaint {complaint_id:$complaint_id})
-        RETURN c
+        MATCH (r:Resident)-[:RAISED]->(c:Complaint {complaint_id:$complaint_id})
+        RETURN
+            c.complaint_id AS complaint_id,
+            c.title AS complaint_title,
+            r.resident_id AS resident_id
         LIMIT 1
         """
 
@@ -3042,16 +3544,16 @@ def assign_complaint_to_team(request):
 
         # Create relationship
         assign_query = """
-        MATCH (c:Complaint {complaint_id:$complaint_id})
-        MATCH (t:MaintenanceTeam {team_id:$team_id})
+        MATCH (r:Resident)-[:RAISED]->(c:Complaint {complaint_id: $complaint_id})
+        MATCH (t:MaintenanceTeam {team_id: $team_id})
 
         CREATE (c)-[:ASSIGNED_TO]->(t)
-        
         SET c.status = "In Progress"
 
         RETURN
             c.complaint_id AS complaint_id,
             c.title AS complaint_title,
+            r.resident_id AS resident_id,
             t.team_id AS team_id,
             t.team_name AS team_name
         """
@@ -3063,6 +3565,43 @@ def assign_complaint_to_team(request):
                 "team_id": team_id,
             }
         )
+        
+
+        if not assignment:
+            return Response(
+                {
+                    "error": "Failed to assign complaint to maintenance team."
+                },
+                status=500,
+            )
+
+        # ----------------------------------------------------------
+        # Create notification for the resident
+        # ----------------------------------------------------------
+
+        resident_id = assignment[0].get("resident_id")
+
+        if resident_id:
+            try:
+                resident_profile = Profile.objects.get(
+                    resident_id=resident_id
+                )
+                
+                print("CREATING ASSIGNMENT NOTIFICATION FOR:", resident_profile.user)
+
+                create_notification(
+                    user=resident_profile.user,
+                    title="Complaint Assigned",
+                    message=(
+                        f'Your complaint "{assignment[0]["complaint_title"]}" '
+                        f'has been assigned to '
+                        f'{assignment[0]["team_name"]} and is now In Progress.'
+                    ),
+                    notification_type="complaint",
+                )
+
+            except Profile.DoesNotExist as e:
+                print("NOTIFICATION PROFILE ERROR:", e)
 
         return Response(
             {
@@ -3076,147 +3615,713 @@ def assign_complaint_to_team(request):
         db.close()
         
 
-@api_view(["GET"])
-def test_ai(request):
-
-    answer = ask_llm(
-        "Say hello in one sentence."
-    )
-
-    return Response({
-        "response": answer
-    })
     
+def normalize_result(data):
+    """Normalize Cypher result aliases into the application's internal schema."""
+
+    aliases = {
+        # Resident
+        "resident_name": "name",
+
+        # Estate
+        "estate_name": "estate",
+
+        # Property
+        "property_status": "status",
+
+        # Maintenance team
+        "team_name": "team",
+    }
+
+    normalized = []
+
+    for row in data:
+        item = dict(row)
+
+        for old_key, new_key in aliases.items():
+            if old_key in item and new_key not in item:
+                item[new_key] = item.pop(old_key)
+
+        normalized.append(item)
+
+    return normalized
+
+
 def format_results(question: str, data):
 
     if not data:
         return "No matching records were found."
 
-    q = question.lower()
+    data = normalize_result(data)
+    row = data[0]
 
-    # ======================
-    # ESTATES
-    # ======================
-    if "estate" in q:
+    # ==========================================================
+    # FORMATTERS
+    # ==========================================================
 
-        lines = []
+    def estate_overview(rows):
+        r = rows[0]
 
-        for row in data:
-            estate_id = row.get("estate_id")
-            estate_name = row.get("name") or row.get("estate_name")
+        return (
+            "Estate Overview:\n\n"
+            f"• Residents: {r.get('total_residents', 0)}\n"
+            f"• Properties: {r.get('total_properties', 0)}\n"
+            f"• Available properties: {r.get('available_properties', 0)}\n"
+            f"• Occupied properties: {r.get('occupied_properties', 0)}\n"
+            f"• Properties under maintenance: {r.get('maintenance_properties', 0)}\n"
+            f"• Total complaints: {r.get('total_complaints', 0)}\n"
+            f"• Open complaints: {r.get('open_complaints', 0)}\n"
+            f"• Complaints in progress: {r.get('in_progress_complaints', 0)}\n"
+            f"• Resolved complaints: {r.get('resolved_complaints', 0)}"
+        )
 
-            if estate_name:
-                if estate_id:
-                    lines.append(f"• {estate_name} ({estate_id})")
-                else:
-                    lines.append(f"• {estate_name}")
+    def count_result(rows, field, singular, plural):
+        count = rows[0].get(field, 0)
 
-        return "Estates found:\n\n" + "\n".join(lines)
+        return (
+            f"There {'is' if count == 1 else 'are'} "
+            f"{count} {singular if count == 1 else plural}."
+        )
 
-    # ======================
-    # PROPERTIES
-    # ======================
-    if "property" in q:
+    def estates(rows):
+        lines = ["Estates found:\n"]
 
-        lines = []
+        for item in rows:
+            name = item.get("name") or "Unknown"
+            estate_id = item.get("estate_id")
 
-        for row in data:
-            
-            property_number = (
-                row.get("property_number")
-                or row.get("p.property_number")
-            )
-            
-            property_type = {
-                row.get("property_type")
-                or row.get("p.property_type")
-            }
-            
-            status = (
-                row.get("status")
-                or row.get("p.status")
-            )
-            
-            lines.append(
-                f"• {property_number} - {property_type} {status}"
-            )
-
-        return "Properties:\n\n" + "\n".join(lines)
-
-    # ======================
-    # RESIDENTS
-    # ======================
-    if "resident" in q:
-
-        lines = []
-
-        for row in data:
-            
-            resident = (
-                row.get("resident_name")
-                or row.get("name")
-                or row.get("r.name")
-            )
-            
-            resident_id = (
-                row.get("resident_id")
-                or row.get("r.resident_id")
-            )
-            
-            if resident_id:
-                lines.append(f"• {resident} ({resident_id})")
+            if estate_id:
+                lines.append(f"• {name} ({estate_id})")
             else:
-                lines.append(f"• {resident}")
-                
-        return "Residents:\n\n" + "\n".join(lines)
+                lines.append(f"• {name}")
 
-    # ======================
-    # COMPLAINTS
-    # ======================
-    if "complaint" in q:
+        return "\n".join(lines)
 
-        lines = []
+    def residents(rows):
+        lines = ["Residents:\n"]
 
-        for row in data:
-            
-            title = (
-                row.get("title")
-                or row.get("c.title")
+        for item in rows:
+            name = item.get("name") or "Unknown"
+            resident_id = item.get("resident_id")
+
+            if resident_id:
+                lines.append(f"• {name} ({resident_id})")
+            else:
+                lines.append(f"• {name}")
+
+        return "\n".join(lines)
+
+    def residents_in_estate(rows):
+        lines = ["Residents in Estate:\n"]
+
+        for item in rows:
+            name = item.get("name") or "Unknown"
+            resident_id = item.get("resident_id") or "Unknown"
+            estate = item.get("estate") or "Unknown"
+
+            lines.append(
+                f"• {name} ({resident_id}) - {estate}"
             )
-            
-            priority = (
-                row.get("priority")
-                or row.get("c.priority")
+
+        return "\n".join(lines)
+
+    def residents_in_property(rows):
+        lines = ["Residents in Property:\n"]
+
+        for item in rows:
+            name = item.get("name") or "Unknown"
+            resident_id = item.get("resident_id") or "Unknown"
+            property_number = item.get("property_number") or "Unknown"
+
+            lines.append(
+                f"• {name} ({resident_id}) - {property_number}"
+            )
+
+        return "\n".join(lines)
+    
+    def resident_location(rows):
+        lines = ["Resident Location:\n"]
+
+        for item in rows:
+            name = item.get("name") or "Unknown"
+            resident_id = item.get("resident_id") or "Unknown"
+            property_number = item.get("property_number") or "Unknown"
+            property_type = item.get("property_type") or "Unknown"
+            estate = item.get("estate") or "Unknown"
+
+            lines.append(
+                f"• {name} ({resident_id}) - {property_number} | {property_type} | {estate}"
+            )
+
+        return "\n".join(lines)
+    
+    def properties(rows):
+        lines = ["Properties:\n"]
+
+        for item in rows:
+            number = item.get("property_number") or "Unknown"
+            property_type = item.get("property_type") or "Not specified"
+            status = item.get("status") or "Unknown"
+
+            lines.append(
+                f"• {number} - {property_type} | {status}"
+            )
+
+        return "\n".join(lines)
+    
+    def properties_needing_attention(rows):
+        lines = ["Properties Needing Attention:\n"]
+
+        for item in rows:
+            number = item.get("property_number") or "Unknown"
+            property_type = item.get("property_type") or "Unknown"
+            status = item.get("status") or "Unknown"
+            count = item.get("complaint_count", 0)
+
+            lines.append(
+                f"• {number} - {property_type} | "
+                f"{status} | {count} "
+                f"{'complaint' if count == 1 else 'complaints'}"
+            )
+
+        return "\n".join(lines)
+    
+
+    def estate_property_status(rows):
+        lines = ["Estate Property Status:\n"]
+
+        for item in rows:
+            estate = item.get("estate") or "Unknown"
+            number = item.get("property_number") or "Unknown"
+            property_type = item.get("property_type") or "Unknown"
+            status = item.get("status") or "Unknown"
+
+            lines.append(
+                f"• {estate} - {number} | "
+                f"{property_type} | {status}"
+            )
+
+        return "\n".join(lines)
+
+    def complaints(rows):
+        lines = ["Complaints:\n"]
+
+        for item in rows:
+            complaint_id = item.get("complaint_id") or "Unknown"
+            title = item.get("title") or "Untitled complaint"
+            priority = item.get("priority") or "Not specified"
+            status = item.get("status") or "Unknown"
+
+            lines.append(
+                f"• {complaint_id}: "
+                f"{title} | {priority} | {status}"
+            )
+
+        return "\n".join(lines)
+
+    def maintenance_teams(rows):
+        lines = ["Maintenance Teams:\n"]
+
+        for item in rows:
+            team = item.get("team") or "Unknown"
+            specialization = (
+                item.get("specialization")
                 or "Not specified"
             )
-            
-            status = (
-                row.get("status")
-                or row.get("c.status")
-
-            )
-            
-            complaint_id = (
-                row.get("complaint_id")
-                or row.get("c.complaint_id")
-            )
 
             lines.append(
-                f"• {complaint_id}: {title} | {priority} | {status}"
+                f"• {team} | {specialization}"
             )
 
-        return "Complaints:\n\n" + "\n".join(lines)
+        return "\n".join(lines)
+
+    def top_residents(rows):
+        lines = ["Top Residents by Complaints:\n"]
+
+        for i, item in enumerate(rows, 1):
+            name = item.get("name") or "Unknown"
+            count = item.get("complaint_count", 0)
+
+            lines.append(
+                f"{i}. {name} - {count} "
+                f"{'complaint' if count == 1 else 'complaints'}"
+            )
+
+        return "\n".join(lines)
+
+    def top_properties(rows):
+        lines = ["Top Properties by Complaints:\n"]
+
+        for i, item in enumerate(rows, 1):
+            number = item.get("property_number") or "Unknown"
+            count = item.get("complaint_count", 0)
+
+            lines.append(
+                f"{i}. {number} - {count} "
+                f"{'complaint' if count == 1 else 'complaints'}"
+            )
+
+        return "\n".join(lines)
+
+    def top_maintenance_teams(rows):
+        lines = ["Maintenance Teams Handling Most Complaints:\n"]
+
+        for i, item in enumerate(rows, 1):
+            team = item.get("team") or "Unknown"
+            count = item.get("complaint_count", 0)
+
+            lines.append(
+                f"{i}. {team} - {count} "
+                f"{'complaint' if count == 1 else 'complaints'}"
+            )
+
+        return "\n".join(lines)
+
+    def top_resident_single(rows):
+        item = rows[0]
+
+        name = item.get("name") or "Unknown"
+        count = item.get("complaints", 0)
+
+        return (
+            f"{name} has reported "
+            f"{count} "
+            f"{'complaint' if count == 1 else 'complaints'}."
+        )
+
+    def top_team_single(rows):
+        item = rows[0]
+
+        team = item.get("team") or "Unknown"
+        count = item.get("complaint_count", 0)
+
+        return (
+            f"{team} is handling "
+            f"{count} "
+            f"{'complaint' if count == 1 else 'complaints'}."
+        )
+
+    def manager(rows):
+        lines = ["Property Manager:\n"]
+
+        for item in rows:
+            name = item.get("manager_name") or "Unknown"
+            manager_id = item.get("manager_id") or "Unknown"
+
+            lines.append(
+                f"• {name} ({manager_id})"
+            )
+
+        return "\n".join(lines)
+    
+    
+
+    # ==========================================================
+    # RESULT TYPE REGISTRY
+    # ==========================================================
+
+    formatters = [
+        (
+            {"total_residents"},
+            estate_overview,
+        ),
+
+        (
+            {"resident_count"},
+            lambda rows: count_result(
+                rows,
+                "resident_count",
+                "registered resident",
+                "registered residents",
+            ),
+        ),
+
+        (
+            {"complaint_count"},
+            lambda rows: count_result(
+                rows,
+                "complaint_count",
+                "registered complaint",
+                "registered complaints",
+            ),
+        ),
+
+        (
+            {"open_complaints"},
+            lambda rows: count_result(
+                rows,
+                "open_complaints",
+                "open complaint",
+                "open complaints",
+            ),
+        ),
+
+        (
+            {"complaints_in_progress"},
+            lambda rows: count_result(
+                rows,
+                "complaints_in_progress",
+                "complaint in progress",
+                "complaints in progress",
+            ),
+        ),
+
+        (
+            {"resolved_complaints"},
+            lambda rows: count_result(
+                rows,
+                "resolved_complaints",
+                "resolved complaint",
+                "resolved complaints",
+            ),
+        ),
+
+        (
+            {"estate_id", "estate", "property_id",
+             "property_number", "property_type", "status"},
+            estate_property_status,
+        ),
+        
+         (
+            {
+                "resident_id",
+                "name",
+                "property_id",
+                "property_number",
+                "property_type",
+                "estate_id",
+                "estate",
+            },
+            resident_location,
+        ),
+         
+        (
+            {"resident_id", "name", "estate"},
+            residents_in_estate,
+        ),
+
+        (
+            {"resident_id", "name", "property_number"},
+            residents_in_property,
+        ),
+
+        (
+            {"resident", "complaint_count"},
+            top_residents,
+        ),
+
+        (
+            {"name", "complaints"},
+            top_resident_single,
+        ),
+
+        (
+            {"property_number", "complaint_count"},
+            top_properties,
+            
+        ),
+        
+        (
+            {
+                "property_id",
+                "property_number",
+                "property_type",
+                "status",
+                "complaint_count",
+            },
+            properties_needing_attention,
+        ),
+
+        (
+            {"team", "complaint_count"},
+            top_maintenance_teams,
+        ),
+
+        (
+            {"manager_id", "manager_name"},
+            manager,
+        ),
+
+        (
+            {"complaint_id", "title"},
+            complaints,
+        ),
+
+        (
+            {"team", "specialization"},
+            maintenance_teams,
+        ),
+
+        (
+            {"property_number", "property_type", "status"},
+            properties,
+        ),
+
+        (
+            {"resident_id", "name"},
+            residents,
+        ),
+
+        (
+            {"estate_id", "name"},
+            estates,
+        ),
+    ]
+
+    # ==========================================================
+    # SCHEMA-BASED FORMAT SELECTION
+    # ==========================================================
+
+    result_keys = set(row.keys())
+
+    matches = [
+        (required_keys, formatter)
+        for required_keys, formatter in formatters
+        if required_keys.issubset(result_keys)
+    ]
+
+    if matches:
+        _, formatter = max(
+            matches,
+            key=lambda item: len(item[0])
+        )
+        
+        print(">>> FORMATTER USED:", formatter.__name__)
+        return formatter(data)
+    
+    print(">>> NO FORMATTER MATCHED")
+    print(">>> FORMAT_RESULTS QUESTION:", question)
+    print(">>> FORMAT_RESULTS DATA:", data)
 
     return str(data)
 
+def resolve_user_estate(user):
+    """
+    Resolve the authenticated user's estate context.
 
+    Managers:
+        User → Profile.manager_id → Manager → Estate
+
+    Residents:
+        User → Profile.resident_id → Resident → Property → Estate
+
+    Admins:
+        Global system access. No estate restriction.
+    """
+
+    profile = getattr(user, "profile", None)
+
+    if not profile:
+        raise ValueError("Authenticated user has no profile.")
+
+    role = profile.role
+
+    # ==========================================================
+    # ADMIN / SOFTWARE DEVELOPER
+    # ==========================================================
+
+    if role == "admin":
+        return {
+            "role": "admin",
+            "estate_id": None,
+            "estate_name": None,
+            "scope": "global",
+        }
+
+    # ==========================================================
+    # MANAGER
+    # ==========================================================
+
+    if role == "manager":
+
+        manager_id = profile.manager_id
+
+        if not manager_id:
+            raise ValueError(
+                "Manager account is not linked to a manager record."
+            )
+
+        query = """
+        MATCH (e:Estate)-[:HAS_MANAGER]->(m:Manager)
+        WHERE m.manager_id = $manager_id
+
+        RETURN
+            e.estate_id AS estate_id,
+            e.name AS estate_name
+
+        LIMIT 1
+        """
+
+        result = execute_cypher(
+            query,
+            {"manager_id": manager_id},
+        )
+
+    # ==========================================================
+    # RESIDENT
+    # ==========================================================
+
+    elif role == "resident":
+
+        resident_id = profile.resident_id
+
+        if not resident_id:
+            raise ValueError(
+                "Resident account is not linked to a resident record."
+            )
+
+        query = """
+        MATCH (r:Resident)-[:LIVES_IN]->(p:Property)
+              <-[:HAS_PROPERTY]-(e:Estate)
+
+        WHERE r.resident_id = $resident_id
+
+        RETURN
+            e.estate_id AS estate_id,
+            e.name AS estate_name
+
+        LIMIT 1
+        """
+
+        result = execute_cypher(
+            query,
+            {"resident_id": resident_id},
+        )
+
+    else:
+        return None
+
+    if not result:
+        raise ValueError(
+            "No estate is associated with this account."
+        )
+
+    return {
+        "role": role,
+        "estate_id": result[0]["estate_id"],
+        "estate_name": result[0]["estate_name"],
+        "scope": "current_estate",
+    }
+    
+    
+def plan_query(question, understanding, user_context):
+    """
+    Layer 2: Intent & Query Planning.
+
+    Combines semantic understanding from Layer 1 with
+    trusted authenticated-user context.
+
+    This layer does NOT:
+    - access Neo4j
+    - generate Cypher
+    - execute queries
+    - calculate results
+
+    It determines the intended query scope and carries
+    forward the constraints required by Layer 3.
+    """
+
+    intent = understanding.get("intent", "general")
+    entity = understanding.get("entity", "system")
+    operation = understanding.get("operation", "find")
+    filters = understanding.get("filters", {})
+
+    if not isinstance(filters, dict):
+        filters = {}
+
+    role = user_context.get("role") if user_context else None
+    estate_id = user_context.get("estate_id") if user_context else None
+    estate_name = user_context.get("estate_name") if user_context else None
+
+    plan = {
+        "intent": intent,
+        "entity": entity,
+        "operation": operation,
+        "filters": filters,
+        "scope": "global",
+        "estate_id": None,
+        "estate_name": None,
+    }
+
+    # ==========================================================
+    # ADMIN / DEVELOPER
+    # ==========================================================
+
+    if role == "admin":
+
+        plan["scope"] = "all_estates"
+
+        # If the user explicitly names an estate,
+        # preserve it as a query filter.
+        if filters.get("estate_name"):
+            plan["estate_name"] = filters["estate_name"]
+
+        print(">>> QUERY PLAN: ADMIN / GLOBAL <<<")
+        print(plan)
+
+        return plan
+
+    # ==========================================================
+    # NON-ADMIN USERS
+    #
+    # Managers and residents are restricted to their
+    # authenticated estate.
+    # ==========================================================
+
+    if role in ("manager", "resident"):
+
+        if not estate_id:
+            raise ValueError(
+                "No estate context is available for this account."
+            )
+
+        requested_estate = filters.get("estate_name")
+
+        # ----------------------------------------------------------
+        # EXPLICIT ESTATE REQUEST
+        #
+        # Non-admin users may only query their authenticated estate.
+        # ----------------------------------------------------------
+
+        if requested_estate:
+
+            if requested_estate.strip().lower() != estate_name.strip().lower():
+
+                print(">>> ESTATE ACCESS VIOLATION <<<")
+                print(">>> REQUESTED ESTATE:", requested_estate)
+                print(">>> USER ESTATE:", estate_name)
+
+                raise PermissionError(
+                    "You are not authorized to access this estate."
+                )
+
+        # ----------------------------------------------------------
+        # AUTHENTICATED ESTATE CONTEXT
+        # ----------------------------------------------------------
+
+        plan["scope"] = "current_estate"
+        plan["estate_id"] = estate_id
+        plan["estate_name"] = estate_name
+
+        print(">>> QUERY PLAN: CURRENT ESTATE <<<")
+        print(plan)
+
+        return plan
+
+    # ==========================================================
+    # UNKNOWN / INVALID ROLE
+    # ==========================================================
+
+    raise ValueError(
+        "Unable to determine a valid query scope for this account."
+    )
+    
+    
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def ai_query_v3(request):
-
-
     question = request.data.get("question", "").strip()
-    
+
     print("=" * 80)
     print("QUESTION RECEIVED:")
     print(repr(question))
@@ -3228,47 +4333,142 @@ def ai_query_v3(request):
             status=400,
         )
 
-    cypher = generate_cypher(question)
-    
-    
-    cypher = normalize_cypher(cypher)
-    
-    if cypher.strip() == 'RETURN "UNSUPPORTED_QUERY" AS error':
-        return Response({
-            "question": question,
-            "response": "I'm sorry, I can only answer questions about the Estate Intelligence System database.",
-            "data": [],
-        })
-        
-    if not is_safe_cypher(cypher):
-        return Response(
-            {"error": "Unsafe Cypher generated."},
-            status=400,
+    try:
+        understanding = detect_ai_intent(question)
+
+        print("=" * 80)
+        print("SEMANTIC UNDERSTANDING:")
+        print(understanding)
+        print("=" * 80)
+
+        user_context = resolve_user_estate(request.user)
+
+        print("=" * 80)
+        print("USER CONTEXT:")
+        print(user_context)
+        print("=" * 80)
+
+        query_plan = plan_query(
+            question,
+            understanding,
+            user_context,
         )
 
-    data = execute_cypher(cypher)
-    
-    print("=" * 80)
-    print("QUERY RESULT:")
-    print(data)
-    print("=" * 80)
+        intent = understanding["intent"]
+        
 
-    answer = format_results(question, data)
+        if user_context is None:
+            return Response(
+                {
+                    "error": (
+                        "Your account is not associated "
+                        "with an estate."
+                    )
+                },
+                status=403,
+            )
 
-    return Response({
-        "question": question,
-        "cypher": cypher,
-        "response": answer,
-        "data": data,
-    })
-    
+        print("=" * 80)
+        print("USER ESTATE CONTEXT:")
+        print(user_context)
+        print("=" * 80)
 
-from dashboard.permissions import (
-    IsResident,
-    IsManager,
-    IsAdmin,
-    IsManagerOrAdmin,
-)
+        query_question = question
+
+        if intent == "operational_priorities":
+            query_question = "What should I focus on today?"
+
+        generation_context = {
+            **user_context,
+            "query_plan": query_plan,
+        }
+
+        generated = generate_cypher(
+            query_question,
+            context=generation_context, 
+            semantic_understanding=understanding,
+        )
+
+        if isinstance(generated, tuple):
+            cypher, parameters = generated
+        else:
+            cypher = generated
+            parameters = {}
+
+        if not isinstance(cypher, str) or not cypher.strip():
+            return Response(
+                {"error": "Unable to generate a valid database query."},
+                status=502,
+            )
+
+        cypher = normalize_cypher(cypher)
+
+        if cypher.strip() == 'RETURN "UNSUPPORTED_QUERY" AS error':
+            return Response({
+                "question": question,
+                "response": (
+                    "I'm sorry, I can only answer questions about "
+                    "the Estate Intelligence System database."
+                ),
+                "data": [],
+            })
+
+        if not is_safe_cypher(cypher):
+            return Response(
+                {"error": "Unsafe Cypher generated."},
+                status=400,
+            )
+
+        data = execute_cypher(cypher, parameters)
+
+        print("=" * 80)
+        print("QUERY RESULT:")
+        print(data)
+        print("=" * 80)
+
+        analysis = analyze_results(question, data, intent)
+
+        print("=" * 80)
+        print("AI ANALYSIS:")
+        print(analysis)
+        print("=" * 80)
+
+        answer = analysis["analysis"]
+
+        return Response({
+            "question": question,
+            "cypher": cypher,
+            "response": answer,
+            "analysis": analysis,
+            "data": data,
+        })
+
+    except PermissionError as exc:
+        print("=" * 80)
+        print(">>> AI QUERY ACCESS DENIED <<<")
+        print(repr(exc))
+        print("=" * 80)
+
+        return Response(
+            {
+                "error": str(exc),
+            },
+            status=403,
+        )
+
+    except Exception as exc:
+        print("=" * 80)
+        print(">>> AI QUERY ERROR <<<")
+        print(repr(exc))
+        print("=" * 80)
+
+        return Response(
+            {
+                "error": "Unable to process the request right now.",
+            },
+            status=500,
+        )
+        
 
 class ResidentOnlyView(APIView):
     permission_classes = [IsResident]
@@ -3277,7 +4477,8 @@ class ResidentOnlyView(APIView):
         return Response({
             "message": "Welcome Resident!"
         })
-        
+
+
 class ManagerOnlyView(APIView):
     permission_classes = [IsManager]
 
@@ -3285,7 +4486,8 @@ class ManagerOnlyView(APIView):
         return Response({
             "message": "Welcome Estate Manager!"
         })
-        
+
+
 class AdminOnlyView(APIView):
     permission_classes = [IsAdmin]
 
@@ -3293,6 +4495,7 @@ class AdminOnlyView(APIView):
         return Response({
             "message": "Welcome Developer!"
         })
+
 
 class ManagerAdminView(APIView):
     permission_classes = [IsManagerOrAdmin]

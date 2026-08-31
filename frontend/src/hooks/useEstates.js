@@ -4,6 +4,6 @@ import estateService from "@/services/estateService";
 export function useEstates() {
   return useQuery({
     queryKey: ["estates"],
-    queryFn: getEstates,
+    queryFn: estateService.getEstates,
   });
 }

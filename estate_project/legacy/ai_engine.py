@@ -163,7 +163,9 @@ Properties
 - created_at
 
 ========================================================
+
 RELATIONSHIPS
+
 ========================================================
 
 (Estate)-[:HAS_PROPERTY]->(Property)
@@ -177,7 +179,9 @@ RELATIONSHIPS
 (Complaint)-[:ASSIGNED_TO]->(MaintenanceTeam)
 
 ========================================================
+
 QUERY RULES
+
 ========================================================
 
 Always generate executable Cypher.
@@ -195,7 +199,9 @@ Do NOT return JSON.
 Do NOT return English.
 
 ========================================================
+
 PROPERTY RULES
+
 ========================================================
 
 Use only the property names defined in the Graph Schema.
@@ -206,27 +212,88 @@ Never invent relationships.
 
 Never invent properties.
 
+The GRAPH_SCHEMA is the authoritative source of truth.
+
 ========================================================
+
 MATCHING RULES
+
 ========================================================
 
-When searching names, always use case-insensitive matching.
+When searching names or text values, use case-insensitive matching.
 
-Example
+Use toLower() for exact case-insensitive matching.
 
-WHERE toLower(e.name)=toLower($estate_name)
+Example:
 
-or
+WHERE toLower(e.name) = toLower("Greenfield Estate")
+
+For partial text matching, use:
 
 WHERE toLower(e.name) CONTAINS toLower("greenfield")
 
 ========================================================
+
+RELATIONSHIP TRAVERSAL RULES
+
+========================================================
+
+When a question requires multiple relationships, follow the valid
+relationship path defined in the GRAPH_SCHEMA.
+
+Do NOT assume that an entity is directly connected to another entity
+unless that relationship exists in the schema.
+
+For example, residents are connected to estates through properties:
+
+(Estate)-[:HAS_PROPERTY]->(Property)
+
+(Resident)-[:LIVES_IN]->(Property)
+
+Therefore, to find residents living in an estate, use:
+
+(Resident)-[:LIVES_IN]->(Property)<-[:HAS_PROPERTY]-(Estate)
+
+Example:
+
+MATCH (r:Resident)-[:LIVES_IN]->(p:Property)<-[:HAS_PROPERTY]-(e:Estate)
+
+WHERE toLower(e.name) = toLower("Greenfield Estate")
+
+RETURN
+r.resident_id AS resident_id,
+r.name AS name
+
+ORDER BY name
+
+========================================================
+
 DATE RULES
+
 ========================================================
 
 Use datetime() when comparing timestamps.
 
 Never invent dates.
+
+========================================================
+
+UNSUPPORTED QUERY RULE
+
+========================================================
+
+Only return:
+
+RETURN "UNSUPPORTED_QUERY" AS error
+
+when the requested information genuinely cannot be obtained from the
+provided GRAPH_SCHEMA.
+
+Do NOT return UNSUPPORTED_QUERY simply because the query requires
+multiple relationship traversals.
+
+If the required labels, properties, and relationships exist in the
+GRAPH_SCHEMA, generate the appropriate Cypher query.
 
 ========================================================
 COUNT RULES
@@ -787,9 +854,10 @@ Never infer relationships that are not present in the graph.
 
 
 def generate_cypher(question: str):
-    raise Exception("THIS IS MY GENERATE_CYPHER")
+    print(">>> GENERATE_CYPHER CALLED <<<")
 
     q = question.lower()
+    print(">>> Q:", repr(q))
 
     # ---------- HARDCODED QUERIES ----------
     if "estate" in q:
@@ -804,7 +872,7 @@ ORDER BY name
 
     # ---------- LLM ----------
     response = client.chat.completions.create(
-        model="llama-3.1-8b-instant",
+        model="openai/gpt-oss-120b",
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": question},

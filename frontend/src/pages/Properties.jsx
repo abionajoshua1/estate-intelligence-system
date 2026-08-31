@@ -5,12 +5,12 @@ import {
   useUpdateProperty,
   useDeleteProperty,
 } from "@/hooks/useProperties";
+import { useEstates } from "@/hooks/useEstates";
 
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
@@ -48,84 +48,63 @@ import {
   Pencil,
   Trash2,
   Home,
-  DollarSign,
-  Layers,
+  Wrench,
+  CheckCircle2,
   AlertTriangle,
+  Landmark,
+  User,
 } from "lucide-react";
 
 // ---------------------------------------------------------------------------
-// Helpers: the API shape isn't guaranteed field-for-field, so we resolve
-// common aliases defensively instead of hardcoding a single schema.
+// Confirmed data model for the Property entity:
+// property_id, property_number, property_type, bedrooms, bathrooms, status,
+// estate_id, estate_name, resident_id, resident_name, created_at.
+// Field access is direct — no alias guessing needed.
 // ---------------------------------------------------------------------------
-const pick = (obj, keys, fallback = undefined) => {
-  for (const key of keys) {
-    if (obj && obj[key] !== undefined && obj[key] !== null && obj[key] !== "") {
-      return obj[key];
-    }
-  }
-  return fallback;
-};
+const STATUS_OPTIONS = ["Available", "Occupied", "Maintenance"];
+const TYPE_OPTIONS = ["Apartment", "Duplex", "Bungalow", "Studio"];
 
-const getId = (p) => pick(p, ["id", "property_id", "uuid", "_id"]);
-const getName = (p) => pick(p, ["name", "title", "property_name"], "Untitled property");
-const getAddress = (p) =>
-  pick(p, ["address", "full_address", "location", "street_address"], "—");
-const getStatus = (p) => pick(p, ["status", "state", "property_status"], "unknown");
-const getType = (p) => pick(p, ["type", "property_type", "category"], "unknown");
-const getPrice = (p) => pick(p, ["price", "rent", "amount", "listing_price"]);
-const getBedrooms = (p) => pick(p, ["bedrooms", "beds", "num_bedrooms"]);
-const getBathrooms = (p) => pick(p, ["bathrooms", "baths", "num_bathrooms"]);
-const getArea = (p) => pick(p, ["area", "sqft", "square_feet", "size"]);
+const getId = (p) => p?.property_id;
+const getNumber = (p) => p?.property_number ?? "—";
+const getType = (p) => p?.property_type ?? "—";
+const getStatus = (p) => p?.status ?? "—";
+const getBedrooms = (p) => p?.bedrooms;
+const getBathrooms = (p) => p?.bathrooms;
+const getEstateId = (p) => p?.estate_id;
+const getEstateName = (p) => p?.estate_name ?? "—";
+const getResidentName = (p) => p?.resident_name ?? "Unoccupied";
 
-const getPropertiesArray = (data) => {
+const getArray = (data) => {
   if (!data) return [];
   if (Array.isArray(data)) return data;
   if (Array.isArray(data.results)) return data.results;
   if (Array.isArray(data.properties)) return data.properties;
+  if (Array.isArray(data.estates)) return data.estates;
   if (Array.isArray(data.data)) return data.data;
   return [];
 };
 
-const formatPrice = (value) => {
-  if (value === undefined || value === null || value === "") return "—";
-  const num = Number(value);
-  if (Number.isNaN(num)) return String(value);
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "NGN",
-    maximumFractionDigits: 0,
-  }).format(num);
-};
-
-const titleCase = (str) =>
-  typeof str === "string" && str.length
-    ? str.replace(/[_-]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
-    : "Unknown";
-
 const statusBadgeVariant = (status) => {
   const s = String(status).toLowerCase();
-  if (["active", "available", "listed"].includes(s)) return "success";
-  if (["pending", "under_offer", "under-offer"].includes(s)) return "warning";
-  if (["sold", "leased", "rented", "closed"].includes(s)) return "secondary";
-  if (["inactive", "archived", "off_market"].includes(s)) return "outline";
+  if (s === "available") return "success";
+  if (s === "occupied") return "secondary";
+  if (s === "maintenance") return "warning";
   return "default";
 };
 
 const emptyForm = {
-  name: "",
-  address: "",
-  type: "",
+  estate_id: "",
+  property_number: "",
+  property_type: "",
   status: "",
-  price: "",
   bedrooms: "",
   bathrooms: "",
-  area: "",
 };
 
 export default function Properties() {
   const { data, isLoading, isError, error } = useProperties();
+  const { data: estatesData, isLoading: estatesLoading } = useEstates();
 
-  // TODO: confirm these mutation hooks exist with this exact signature in useProperties.js
   const createMutation = useCreateProperty();
   const updateMutation = useUpdateProperty();
   const deleteMutation = useDeleteProperty();
@@ -140,26 +119,18 @@ export default function Properties() {
   const [activeProperty, setActiveProperty] = useState(null);
   const [form, setForm] = useState(emptyForm);
 
-  const properties = useMemo(() => getPropertiesArray(data), [data]);
-
-  const statusOptions = useMemo(() => {
-    const set = new Set(properties.map((p) => getStatus(p)).filter(Boolean));
-    return Array.from(set);
-  }, [properties]);
-
-  const typeOptions = useMemo(() => {
-    const set = new Set(properties.map((p) => getType(p)).filter(Boolean));
-    return Array.from(set);
-  }, [properties]);
+  const properties = useMemo(() => getArray(data), [data]);
+  const estates = useMemo(() => getArray(estatesData), [estatesData]);
 
   const filteredProperties = useMemo(() => {
     return properties.filter((p) => {
+      const q = search.trim().toLowerCase();
       const matchesSearch =
-        search.trim() === "" ||
-        getName(p).toLowerCase().includes(search.toLowerCase()) ||
-        getAddress(p).toLowerCase().includes(search.toLowerCase());
-      const matchesStatus =
-        statusFilter === "all" || getStatus(p) === statusFilter;
+        q === "" ||
+        String(getNumber(p)).toLowerCase().includes(q) ||
+        String(getEstateName(p)).toLowerCase().includes(q) ||
+        String(getResidentName(p)).toLowerCase().includes(q);
+      const matchesStatus = statusFilter === "all" || getStatus(p) === statusFilter;
       const matchesType = typeFilter === "all" || getType(p) === typeFilter;
       return matchesSearch && matchesStatus && matchesType;
     });
@@ -167,22 +138,10 @@ export default function Properties() {
 
   const stats = useMemo(() => {
     const total = properties.length;
-    const active = properties.filter((p) =>
-      ["active", "available", "listed"].includes(String(getStatus(p)).toLowerCase())
-    ).length;
-    const pending = properties.filter((p) =>
-      ["pending", "under_offer", "under-offer"].includes(
-        String(getStatus(p)).toLowerCase()
-      )
-    ).length;
-    const prices = properties
-      .map((p) => Number(getPrice(p)))
-      .filter((n) => !Number.isNaN(n));
-    const avgPrice = prices.length
-      ? prices.reduce((a, b) => a + b, 0) / prices.length
-      : null;
-
-    return { total, active, pending, avgPrice };
+    const available = properties.filter((p) => getStatus(p) === "Available").length;
+    const occupied = properties.filter((p) => getStatus(p) === "Occupied").length;
+    const maintenance = properties.filter((p) => getStatus(p) === "Maintenance").length;
+    return { total, available, occupied, maintenance };
   }, [properties]);
 
   const resetForm = () => setForm(emptyForm);
@@ -195,14 +154,12 @@ export default function Properties() {
   const openEdit = (property) => {
     setActiveProperty(property);
     setForm({
-      name: getName(property) ?? "",
-      address: getAddress(property) === "—" ? "" : getAddress(property),
-      type: getType(property) === "unknown" ? "" : getType(property),
-      status: getStatus(property) === "unknown" ? "" : getStatus(property),
-      price: getPrice(property) ?? "",
-      bedrooms: getBedrooms(property) ?? "",
-      bathrooms: getBathrooms(property) ?? "",
-      area: getArea(property) ?? "",
+      estate_id: property.estate_id ?? "",
+      property_number: property.property_number ?? "",
+      property_type: property.property_type ?? "",
+      status: property.status ?? "",
+      bedrooms: property.bedrooms ?? "",
+      bathrooms: property.bathrooms ?? "",
     });
     setEditOpen(true);
   };
@@ -249,6 +206,12 @@ export default function Properties() {
   const hasActiveFilters =
     search.trim() !== "" || statusFilter !== "all" || typeFilter !== "all";
 
+  const clearFilters = () => {
+    setSearch("");
+    setStatusFilter("all");
+    setTypeFilter("all");
+  };
+
   return (
     <div className="flex flex-col gap-6 p-4 sm:p-6 lg:p-8">
       {/* Header */}
@@ -256,7 +219,7 @@ export default function Properties() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Properties</h1>
           <p className="text-sm text-muted-foreground">
-            Manage your property listings, statuses, and details.
+            Manage properties across your estates and track their status.
           </p>
         </div>
         <Button onClick={openCreate} className="gap-2 w-full sm:w-auto">
@@ -274,24 +237,18 @@ export default function Properties() {
         />
         <StatCard
           icon={<Home className="h-4 w-4" />}
-          label="Active"
-          value={isLoading ? "—" : stats.active}
+          label="Available"
+          value={isLoading ? "—" : stats.available}
         />
         <StatCard
-          icon={<Layers className="h-4 w-4" />}
-          label="Pending"
-          value={isLoading ? "—" : stats.pending}
+          icon={<CheckCircle2 className="h-4 w-4" />}
+          label="Occupied"
+          value={isLoading ? "—" : stats.occupied}
         />
         <StatCard
-          icon={<DollarSign className="h-4 w-4" />}
-          label="Avg. price"
-          value={
-            isLoading
-              ? "—"
-              : stats.avgPrice !== null
-              ? formatPrice(stats.avgPrice)
-              : "—"
-          }
+          icon={<Wrench className="h-4 w-4" />}
+          label="Maintenance"
+          value={isLoading ? "—" : stats.maintenance}
         />
       </div>
 
@@ -303,7 +260,7 @@ export default function Properties() {
             <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search by name or address..."
+              placeholder="Search by property number, estate, or resident..."
               className="pl-9"
             />
           </div>
@@ -314,9 +271,9 @@ export default function Properties() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All statuses</SelectItem>
-              {statusOptions.map((s) => (
+              {STATUS_OPTIONS.map((s) => (
                 <SelectItem key={s} value={s}>
-                  {titleCase(s)}
+                  {s}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -328,24 +285,17 @@ export default function Properties() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All types</SelectItem>
-              {typeOptions.map((t) => (
+              {TYPE_OPTIONS.map((t) => (
                 <SelectItem key={t} value={t}>
-                  {titleCase(t)}
+                  {t}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
 
           {hasActiveFilters && (
-            <Button
-              variant="ghost"
-              onClick={() => {
-                setSearch("");
-                setStatusFilter("all");
-                setTypeFilter("all");
-              }}
-            >
-              Clear
+            <Button variant="ghost" onClick={clearFilters}>
+              Clear filters
             </Button>
           )}
         </CardContent>
@@ -362,55 +312,58 @@ export default function Properties() {
             <EmptyState
               hasFilters={hasActiveFilters}
               onCreate={openCreate}
-              onClearFilters={() => {
-                setSearch("");
-                setStatusFilter("all");
-                setTypeFilter("all");
-              }}
+              onClearFilters={clearFilters}
             />
           ) : (
             <ScrollArea className="w-full">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Property</TableHead>
-                    <TableHead className="hidden md:table-cell">Type</TableHead>
+                    <TableHead>Property Number</TableHead>
+                    <TableHead className="hidden md:table-cell">Estate</TableHead>
+                    <TableHead className="hidden md:table-cell">Property Type</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead className="hidden sm:table-cell">Price</TableHead>
-                    <TableHead className="hidden lg:table-cell">Beds / Baths</TableHead>
-                    <TableHead className="hidden lg:table-cell">Area</TableHead>
-                    <TableHead className="w-10" />
+                    <TableHead className="hidden sm:table-cell">Bedrooms</TableHead>
+                    <TableHead className="hidden sm:table-cell">Bathrooms</TableHead>
+                    <TableHead className="hidden lg:table-cell">Resident</TableHead>
+                    <TableHead className="w-10">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredProperties.map((property) => {
                     const id = getId(property);
                     return (
-                      <TableRow key={id ?? getName(property)}>
-                        <TableCell>
-                          <div className="flex flex-col">
-                            <span className="font-medium">{getName(property)}</span>
-                            <span className="text-xs text-muted-foreground">
-                              {getAddress(property)}
-                            </span>
-                          </div>
+                      <TableRow key={id ?? getNumber(property)}>
+                        <TableCell className="font-medium">
+                          {getNumber(property)}
                         </TableCell>
                         <TableCell className="hidden md:table-cell">
-                          {titleCase(getType(property))}
+                          {getEstateName(property)}
+                        </TableCell>
+                        <TableCell className="hidden md:table-cell">
+                          {getType(property)}
                         </TableCell>
                         <TableCell>
                           <Badge variant={statusBadgeVariant(getStatus(property))}>
-                            {titleCase(getStatus(property))}
+                            {getStatus(property)}
                           </Badge>
                         </TableCell>
                         <TableCell className="hidden sm:table-cell">
-                          {formatPrice(getPrice(property))}
+                          {getBedrooms(property) ?? "—"}
+                        </TableCell>
+                        <TableCell className="hidden sm:table-cell">
+                          {getBathrooms(property) ?? "—"}
                         </TableCell>
                         <TableCell className="hidden lg:table-cell">
-                          {getBedrooms(property) ?? "—"} / {getBathrooms(property) ?? "—"}
-                        </TableCell>
-                        <TableCell className="hidden lg:table-cell">
-                          {getArea(property) ? `${getArea(property)} sqft` : "—"}
+                          <span
+                            className={
+                              property.resident_name
+                                ? "text-foreground"
+                                : "text-muted-foreground"
+                            }
+                          >
+                            {getResidentName(property)}
+                          </span>
                         </TableCell>
                         <TableCell>
                           <DropdownMenu>
@@ -420,12 +373,26 @@ export default function Properties() {
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              <DropdownMenuItem onClick={() => openEdit(property)}>
+                              <DropdownMenuItem 
+                                onSelect={(event) => {
+                                  event.preventDefault();
+
+                                  setTimeout(() => {
+                                    openEdit(property);
+                                  }, 0);
+                                }}
+                              >
                                 <Pencil className="mr-2 h-4 w-4" />
                                 Edit
                               </DropdownMenuItem>
                               <DropdownMenuItem
-                                onClick={() => openDelete(property)}
+                                onSelect={(event) => {
+                                  event.preventDefault();
+
+                                  setTimeout(() => {
+                                    openDelete(property);
+                                  }, 0);
+                                }}
                                 className="text-destructive"
                               >
                                 <Trash2 className="mr-2 h-4 w-4" />
@@ -450,7 +417,13 @@ export default function Properties() {
           <DialogHeader>
             <DialogTitle>Add property</DialogTitle>
           </DialogHeader>
-          <PropertyForm form={form} setForm={setForm} onSubmit={handleCreateSubmit}>
+          <PropertyForm
+            form={form}
+            setForm={setForm}
+            onSubmit={handleCreateSubmit}
+            estates={estates}
+            estatesLoading={estatesLoading}
+          >
             <DialogFooter>
               <Button
                 type="button"
@@ -473,7 +446,13 @@ export default function Properties() {
           <DialogHeader>
             <DialogTitle>Edit property</DialogTitle>
           </DialogHeader>
-          <PropertyForm form={form} setForm={setForm} onSubmit={handleEditSubmit}>
+          <PropertyForm
+            form={form}
+            setForm={setForm}
+            onSubmit={handleEditSubmit}
+            estates={estates}
+            estatesLoading={estatesLoading}
+          >
             <DialogFooter>
               <Button
                 type="button"
@@ -499,7 +478,7 @@ export default function Properties() {
           <p className="text-sm text-muted-foreground">
             Are you sure you want to delete{" "}
             <span className="font-medium text-foreground">
-              {activeProperty ? getName(activeProperty) : "this property"}
+              {activeProperty ? getNumber(activeProperty) : "this property"}
             </span>
             ? This action cannot be undone.
           </p>
@@ -542,53 +521,108 @@ function StatCard({ icon, label, value }) {
   );
 }
 
-function PropertyForm({ form, setForm, onSubmit, children }) {
+function PropertyForm({ form, setForm, onSubmit, children, estates, estatesLoading }) {
   const update = (key) => (e) =>
     setForm((prev) => ({ ...prev, [key]: e.target.value }));
+
+  const updateSelect = (key) => (value) =>
+    setForm((prev) => ({ ...prev, [key]: value }));
 
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-4">
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="flex flex-col gap-1.5 sm:col-span-2">
-          <label className="text-sm font-medium">Name</label>
-          <Input value={form.name} onChange={update("name")} required />
+          <label className="text-sm font-medium">Estate</label>
+
+          <select
+            value={form.estate_id}
+            onChange={(e) =>
+              setForm((prev) => ({
+                ...prev,
+                estate_id: e.target.value,
+              }))
+            }
+            required
+            disabled={estatesLoading}
+            className="h-8 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none focus:border-ring focus:ring-3 focus:ring-ring/50"
+          >
+            <option value="">
+              {estatesLoading ? "Loading estates..." : "Select estate"}
+            </option>
+
+            {estates.map((estate) => (
+              <option
+                key={estate.estate_id}
+                value={estate.estate_id}
+              >
+                {estate.name}
+              </option>
+            ))}
+          </select>
         </div>
+
         <div className="flex flex-col gap-1.5 sm:col-span-2">
-          <label className="text-sm font-medium">Address</label>
-          <Textarea
-            value={form.address}
-            onChange={update("address")}
-            rows={2}
+          <label className="text-sm font-medium">Property Number</label>
+          <Input
+            value={form.property_number}
+            onChange={update("property_number")}
+            placeholder="e.g. A101"
+            required
           />
         </div>
+
         <div className="flex flex-col gap-1.5">
-          <label className="text-sm font-medium">Type</label>
-          <Input value={form.type} onChange={update("type")} />
+          <label className="text-sm font-medium">Property Type</label>
+
+          <select
+            value={form.property_type}
+            onChange={(e) =>
+              setForm((prev) => ({
+                ...prev,
+                property_type: e.target.value,
+              }))
+            }
+            required
+            className="h-8 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none focus:border-ring focus:ring-3 focus:ring-ring/50"
+          >
+            <option value="">Select type</option>
+
+            {TYPE_OPTIONS.map((type) => (
+              <option key={type} value={type}>
+                {type}
+              </option>
+            ))}
+          </select>
         </div>
+
         <div className="flex flex-col gap-1.5">
           <label className="text-sm font-medium">Status</label>
-          <Input value={form.status} onChange={update("status")} />
+          <select
+            value={form.status}
+            onChange={(e) =>
+              setForm((prev) => ({
+                ...prev,
+                status: e.target.value,
+              }))
+            }
+            required
+            className="h-8 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none focus:border-ring focus:ring-3 focus:ring-ring/50"
+          >
+            <option value="">Select status</option>
+
+            {STATUS_OPTIONS.map((status) => (
+              <option key={status} value={status}>
+                {status}
+              </option>
+            ))}
+          </select>
         </div>
-        <div className="flex flex-col gap-1.5">
-          <label className="text-sm font-medium">Price</label>
-          <Input
-            type="number"
-            value={form.price}
-            onChange={update("price")}
-          />
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <label className="text-sm font-medium">Area (sqft)</label>
-          <Input
-            type="number"
-            value={form.area}
-            onChange={update("area")}
-          />
-        </div>
+
         <div className="flex flex-col gap-1.5">
           <label className="text-sm font-medium">Bedrooms</label>
           <Input
             type="number"
+            min="0"
             value={form.bedrooms}
             onChange={update("bedrooms")}
           />
@@ -597,6 +631,7 @@ function PropertyForm({ form, setForm, onSubmit, children }) {
           <label className="text-sm font-medium">Bathrooms</label>
           <Input
             type="number"
+            min="0"
             value={form.bathrooms}
             onChange={update("bathrooms")}
           />

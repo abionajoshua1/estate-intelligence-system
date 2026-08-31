@@ -1,5 +1,8 @@
 import re
 
+
+# Cypher clauses that can modify, delete, or otherwise perform
+# operations outside the read-only query scope of this application.
 FORBIDDEN_KEYWORDS = [
     "CREATE",
     "MERGE",
@@ -10,27 +13,45 @@ FORBIDDEN_KEYWORDS = [
     "DROP",
     "CALL",
     "LOAD CSV",
+    "FOREACH",
+    "START",
 ]
 
-ALLOWED_START = [
-    "MATCH",
-    "OPTIONAL MATCH",
-]
+ALLOWED_START_PATTERN = re.compile(
+    r"^(MATCH|OPTIONAL\s+MATCH)\b",
+    re.IGNORECASE,
+)
+
 
 def is_safe_cypher(query: str) -> bool:
     """
-    Returns True only if the query appears to be read-only.
+    Returns True only for single, read-only Cypher statements
+    beginning with MATCH or OPTIONAL MATCH.
     """
 
-    query = query.strip().upper()
-
-    # Must begin with a read-only clause
-    if not any(query.startswith(keyword) for keyword in ALLOWED_START):
+    if not isinstance(query, str):
         return False
 
-    # Reject dangerous keywords
+    query = query.strip()
+
+    if not query:
+        return False
+
+    # Reject multiple statements.
+    if ";" in query.rstrip(";"):
+        return False
+
+    # Query must begin with a valid read-only clause.
+    if not ALLOWED_START_PATTERN.match(query):
+        return False
+
+    upper_query = query.upper()
+
+    # Reject dangerous Cypher clauses.
     for keyword in FORBIDDEN_KEYWORDS:
-        if re.search(rf"\b{re.escape(keyword)}\b", query):
+        pattern = rf"\b{re.escape(keyword)}\b"
+
+        if re.search(pattern, upper_query):
             return False
 
     return True

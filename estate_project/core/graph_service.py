@@ -123,11 +123,11 @@ def fetch_all_residents():
         db.close()
 
 
-def execute_cypher(query):
+def execute_cypher(query, parameters=None):
     db = Neo4jConnection()
 
     try:
-        results = db.query(query)
+        results = db.query(query, parameters)
 
         cleaned_results = []
 
