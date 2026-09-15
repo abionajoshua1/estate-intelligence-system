@@ -25,6 +25,7 @@ class Profile(models.Model):
         max_length=20,
         choices=ROLE_CHOICES,
         default="resident",
+        db_index=True,
     )
     
     resident_id = models.CharField(
