@@ -1515,7 +1515,7 @@ def get_complaints(request):
 
         ORDER BY c.created_at DESC, c.complaint_id DESC
         SKIP $skip
-        LIMIT $page_size
+        LIMIT $page_size + 1
         """
 
         parameters = {
@@ -1553,7 +1553,7 @@ def get_complaints(request):
 
         ORDER BY c.created_at DESC, c.complaint_id DESC
         SKIP $skip
-        LIMIT $page_size
+        LIMIT $page_size + 1
         """
 
         parameters = {
