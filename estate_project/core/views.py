@@ -1454,6 +1454,41 @@ def create_complaint(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def get_complaints(request):
+    try:
+        page = int(request.query_params.get("page", 1))
+    except ValueError:
+        return Response(
+            {"error": "Page must be a number."},
+            status=400,
+        )
+    
+    try:
+        page_size = int(request.query_params.get("page_size", 10))
+    except ValueError:
+        return Response(
+            {"error": "Page size must be a number."},
+            status=400,
+        )
+    
+    if page < 1:
+        return Response(
+            {"error": "Page must be at least 1."},
+            status=400,
+        )
+        
+    if page_size < 1:
+        return Response(
+            {"error": "Page size must be at least 1."},
+            status=400,
+        )
+        
+    if page_size > 100:
+        return Response(
+            {"error": "Page size cannot exceed 100."},
+            status=400,
+        )
+
+    skip = (page - 1) * page_size
 
     role = getattr(
         getattr(request.user, "profile", None),
@@ -1478,10 +1513,15 @@ def get_complaints(request):
             c.status AS status,
             toString(c.created_at) AS created_at
 
-        ORDER BY c.created_at DESC
+        ORDER BY c.created_at DESC, c.complaint_id DESC
+        SKIP $skip
+        LIMIT $page_size
         """
 
-        parameters = {}
+        parameters = {
+            "skip": skip,
+            "page_size": page_size,
+        }
 
     elif role == "resident":
         resident_id = request.user.profile.resident_id
@@ -1511,11 +1551,15 @@ def get_complaints(request):
             c.status AS status,
             toString(c.created_at) AS created_at
 
-        ORDER BY c.created_at DESC
+        ORDER BY c.created_at DESC, c.complaint_id DESC
+        SKIP $skip
+        LIMIT $page_size
         """
 
         parameters = {
             "resident_id": resident_id,
+            "skip": skip,
+            "page_size": page_size,
         }
     else:
         return Response(
