@@ -1498,11 +1498,25 @@ def get_complaints(request):
     )
     
     status = request.query_params.get("status")
+    priority = request.query_params.get("priority")
+    category = request.query_params.get("category")
     
     where_clause = ""
 
     if status:
         where_clause = "WHERE c.status = $status"
+        
+    if priority:
+        if where_clause:
+            where_clause += " AND c.priority = $priority"
+        else:
+            where_clause = "WHERE c.priority = $priority"
+            
+    if category:
+        if where_clause:
+            where_clause += " AND c.category = $category"
+        else:
+            where_clause = "WHERE c.category = $category"
 
     if role in ["manager", "admin"]:
         query = f"""
@@ -1532,6 +1546,8 @@ def get_complaints(request):
             "skip": skip,
             "page_size": page_size,
             "status": status,
+            "priority": priority,
+            "category": category,
         }
 
     elif role == "resident":
@@ -1574,6 +1590,8 @@ def get_complaints(request):
             "skip": skip,
             "page_size": page_size,
             "status": status,
+            "priority": priority,
+            "category": category,
         }
     else:
         return Response(

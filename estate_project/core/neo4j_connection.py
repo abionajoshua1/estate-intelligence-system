@@ -1,10 +1,19 @@
-from neo4j import GraphDatabase
+import os
+
+from dotenv import load_dotenv
+from neo4j import GraphDatabase, basic_auth
+
+load_dotenv()
+
 
 class Neo4jConnection:
     def __init__(self):
         self.driver = GraphDatabase.driver(
-            "bolt://localhost:7687",
-            auth=("neo4j", "Theuniverse1@")  # change this
+            os.getenv("NEO4J_URI") or "",
+            auth=basic_auth(
+                os.getenv("NEO4J_USER") or "",
+                os.getenv("NEO4J_PASSWORD") or "",
+            ),
         )
 
     def close(self):
