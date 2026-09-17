@@ -1421,6 +1421,7 @@ def create_complaint(request):
                 "description": description,
                 "category": category,
                 "priority": priority,
+                "status": status,
             }
         )
         
@@ -1495,10 +1496,19 @@ def get_complaints(request):
         "role",
         None,
     )
+    
+    status = request.query_params.get("status")
+    
+    where_clause = ""
+
+    if status:
+        where_clause = "WHERE c.status = $status"
 
     if role in ["manager", "admin"]:
-        query = """
+        query = f"""
         MATCH (r:Resident)-[:RAISED]->(c:Complaint)-[:ABOUT]->(p:Property)
+        
+        {where_clause}
 
         RETURN
             c.complaint_id AS complaint_id,
@@ -1521,6 +1531,7 @@ def get_complaints(request):
         parameters = {
             "skip": skip,
             "page_size": page_size,
+            "status": status,
         }
 
     elif role == "resident":
@@ -1534,9 +1545,11 @@ def get_complaints(request):
                 status=403,
             )
 
-        query = """
+        query = f"""
         MATCH (r:Resident {resident_id: $resident_id})
             -[:RAISED]->(c:Complaint)-[:ABOUT]->(p:Property)
+            
+        {where_clause}
 
         RETURN
             c.complaint_id AS complaint_id,
@@ -1560,6 +1573,7 @@ def get_complaints(request):
             "resident_id": resident_id,
             "skip": skip,
             "page_size": page_size,
+            "status": status,
         }
     else:
         return Response(
@@ -1574,10 +1588,19 @@ def get_complaints(request):
             query,
             parameters,
         )
+        
+        has_next = len(complaints) > page_size
+        complaints = complaints[:page_size]
+        
     finally:
         db.close()
 
-    return Response(complaints)
+    return Response({
+        "page": page,
+        "page_size": page_size,
+        "has_next": has_next,
+        "results": complaints,
+    })
 
 
 @api_view(["GET"])
