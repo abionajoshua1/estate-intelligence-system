@@ -736,12 +736,12 @@ def generate_cypher(question: str, context=None, semantic_understanding=None,):
 
                 WHERE
                     toLower(trim(p.property_id)) =
-                    toLower(trim($property_identifier))
+                    toLower(trim($property_number))
 
                     OR
 
                     toLower(trim(p.property_number)) =
-                    toLower(trim($property_identifier))
+                    toLower(trim($property_number))
 
                 RETURN
                     r.resident_id AS resident_id,
@@ -754,7 +754,7 @@ def generate_cypher(question: str, context=None, semantic_understanding=None,):
                 """.strip(),
 
                 {
-                    "property_identifier": property_identifier
+                    "property_number": property_identifier
                 },
             )
 
@@ -1672,6 +1672,48 @@ def generate_cypher(question: str, context=None, semantic_understanding=None,):
         """.strip()
         
     # ==========================================================
+    # PROPERTY MANAGER
+    #
+    # Example:
+    # Who manages the property where John Doe lives?
+    # ==========================================================
+
+    manager_match = re.search(
+        r"property where (.+?) lives\??$",
+        question,
+        re.IGNORECASE
+    )
+
+    if manager_match and "who manages" in q:
+
+        resident_name = (
+            manager_match.group(1)
+            .strip()
+            .rstrip("?.!")
+            .strip()
+        )
+
+        print(">>> PROPERTY MANAGER QUERY USED <<<")
+        print(">>> RESIDENT:", resident_name)
+
+        return (
+            """
+            MATCH (r:Resident {name: $resident_name})
+                -[:LIVES_IN]->(p:Property)
+                <-[:HAS_PROPERTY]-(e:Estate)
+                -[:HAS_MANAGER]->(m:Manager)
+
+            RETURN
+                m.manager_id AS manager_id,
+                m.name AS manager_name
+            """.strip(),
+
+            {
+                "resident_name": resident_name
+            },
+        )
+        
+    # ==========================================================
     # ESTATE MANAGER
     #
     # Examples:
@@ -1719,48 +1761,6 @@ def generate_cypher(question: str, context=None, semantic_understanding=None,):
             },
         )
 
-
-    # ==========================================================
-    # PROPERTY MANAGER
-    #
-    # Example:
-    # Who manages the property where John Doe lives?
-    # ==========================================================
-
-    manager_match = re.search(
-        r"property where (.+?) lives\??$",
-        question,
-        re.IGNORECASE
-    )
-
-    if manager_match and "who manages" in q:
-
-        resident_name = (
-            manager_match.group(1)
-            .strip()
-            .rstrip("?.!")
-            .strip()
-        )
-
-        print(">>> PROPERTY MANAGER QUERY USED <<<")
-        print(">>> RESIDENT:", resident_name)
-
-        return (
-            """
-            MATCH (r:Resident {name: $resident_name})
-                -[:LIVES_IN]->(p:Property)
-                <-[:HAS_PROPERTY]-(e:Estate)
-                -[:HAS_MANAGER]->(m:Manager)
-
-            RETURN
-                m.manager_id AS manager_id,
-                m.name AS manager_name
-            """.strip(),
-
-            {
-                "resident_name": resident_name
-            },
-        )
 
 
     # ==========================================================

@@ -158,6 +158,9 @@ class AIQueryV3APITests(APITestCase):
             password="testpassword123",
         )
 
+        self.user.profile.role = "admin"
+        self.user.profile.save()
+
         self.client.force_authenticate(user=self.user)
         
         

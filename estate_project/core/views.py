@@ -4511,7 +4511,13 @@ def ai_query_v3(request):
         print(data)
         print("=" * 80)
 
-        analysis = analyze_results(question, data, intent)
+        analysis = analyze_results(
+            question,
+            data,
+            intent,
+            understanding["operation"],
+            understanding["entity"],
+        )
 
         print("=" * 80)
         print("AI ANALYSIS:")
