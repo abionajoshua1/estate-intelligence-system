@@ -274,7 +274,7 @@ def get_residents(request):
     return Response(residents)
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsManagerOrAdmin])
 def create_resident(request):
 
     data = request.data
@@ -409,8 +409,23 @@ def create_resident(request):
     )
 
 @api_view(["PUT"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsManagerOrAdmin])
 def update_resident(request, resident_id):
+    
+    try:
+        context = get_authorization_context(request.user)
+
+        authorize_resource(
+            context,
+            "resident",
+            resident_id,
+        )
+
+    except (AuthorizationError, ValueError) as exc:
+        return Response(
+            {"error": str(exc)},
+            status=403,
+        )
 
     db = Neo4jConnection()
 
@@ -3709,13 +3724,33 @@ def assign_complaint_to_team(request):
             status=400,
         )
 
+    try:
+        context = get_authorization_context(request.user)
+
+        authorize_resource(
+            context,
+            "complaint",
+            complaint_id,
+        )
+
+        authorize_resource(
+            context,
+            "maintenance_team",
+            team_id,
+        )
+
+    except (AuthorizationError, ValueError) as exc:
+        return Response(
+            {"error": str(exc)},
+            status=403,
+        )
+
     db = Neo4jConnection()
 
     try:
-
         # Check complaint exists
         complaint_query = """
-        MATCH (r:Resident)-[:RAISED]->(c:Complaint {complaint_id:$complaint_id})
+        MATCH (r:Resident)-[:RAISED]->(c:Complaint {complaint_id: $complaint_id})
         RETURN
             c.complaint_id AS complaint_id,
             c.title AS complaint_title,
@@ -3740,7 +3775,7 @@ def assign_complaint_to_team(request):
 
         # Check maintenance team exists
         team_query = """
-        MATCH (t:MaintenanceTeam {team_id:$team_id})
+        MATCH (t:MaintenanceTeam {team_id: $team_id})
         RETURN t
         LIMIT 1
         """
@@ -3762,7 +3797,8 @@ def assign_complaint_to_team(request):
 
         # Check complaint isn't already assigned
         existing_query = """
-        MATCH (c:Complaint {complaint_id:$complaint_id})-[r:ASSIGNED_TO]->(:MaintenanceTeam)
+        MATCH (c:Complaint {complaint_id: $complaint_id})
+              -[r:ASSIGNED_TO]->(:MaintenanceTeam)
         RETURN r
         LIMIT 1
         """
@@ -3805,7 +3841,6 @@ def assign_complaint_to_team(request):
                 "team_id": team_id,
             }
         )
-        
 
         if not assignment:
             return Response(
@@ -3818,7 +3853,6 @@ def assign_complaint_to_team(request):
         # ----------------------------------------------------------
         # Create notification for the resident
         # ----------------------------------------------------------
-
         resident_id = assignment[0].get("resident_id")
 
         if resident_id:
@@ -3826,8 +3860,11 @@ def assign_complaint_to_team(request):
                 resident_profile = Profile.objects.get(
                     resident_id=resident_id
                 )
-                
-                print("CREATING ASSIGNMENT NOTIFICATION FOR:", resident_profile.user)
+
+                print(
+                    "CREATING ASSIGNMENT NOTIFICATION FOR:",
+                    resident_profile.user
+                )
 
                 create_notification(
                     user=resident_profile.user,
@@ -3853,7 +3890,7 @@ def assign_complaint_to_team(request):
 
     finally:
         db.close()
-        
+
 
     
 def normalize_result(data):
