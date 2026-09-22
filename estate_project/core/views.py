@@ -50,6 +50,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 
 from .authorization import (
+    authorize_resource,
     get_authorization_context,
     is_global_access,
     authorize_estate,
@@ -1015,13 +1016,52 @@ def create_property(request):
 
 @api_view(["PUT"])
 @permission_classes([IsAuthenticated])
-def update_property(request, property_id):
+def update_property(request, property_id) -> Response:
+
+    property_id = str(property_id).strip()
+
+    # Authorization
+    try:
+        context = get_authorization_context(request.user)
+
+        # Only managers and admins can update properties
+        if context["role"] not in ["manager", "admin"]:
+            return Response(
+                {
+                    "error": "You are not authorized to update properties."
+                },
+                status=403,
+            )
+
+        # Get requested update data
+        data = request.data
+        estate_id = data.get("estate_id", "").strip()
+
+        # The existing property must belong to the user's
+        # authorized estate.
+        authorize_resource(
+            context,
+            "property",
+            property_id,
+        )
+
+        # The target estate must also be within the user's
+        # authorized scope.
+        authorize_estate(
+            context,
+            estate_id,
+        )
+
+    except (AuthorizationError, ValueError) as exc:
+        return Response(
+            {"error": str(exc)},
+            status=403,
+        )
 
     db = Neo4jConnection()
 
     query = """
     MATCH (p:Property {property_id: $property_id})
-
     RETURN
         p.property_id AS property_id,
         p.property_number AS property_number,
@@ -1047,10 +1087,7 @@ def update_property(request, property_id):
             },
             status=404,
         )
-    
-    data = request.data
-    
-    estate_id = data.get("estate_id", "").strip()
+
     property_number = data.get("property_number", "").strip()
     property_type = data.get("property_type", "").strip()
     bedrooms = data.get("bedrooms")
@@ -1072,13 +1109,13 @@ def update_property(request, property_id):
             },
             status=400,
         )
-    
+
     allowed_types = [
-    "Apartment",
-    "Duplex",
-    "Bungalow",
-    "Studio",
-]
+        "Apartment",
+        "Duplex",
+        "Bungalow",
+        "Studio",
+    ]
 
     if property_type not in allowed_types:
         db.close()
@@ -1088,12 +1125,12 @@ def update_property(request, property_id):
             },
             status=400,
         )
-    
+
     allowed_status = [
-    "Available",
-    "Occupied",
-    "Maintenance",
-]
+        "Available",
+        "Occupied",
+        "Maintenance",
+    ]
 
     if status_value not in allowed_status:
         db.close()
@@ -1103,7 +1140,7 @@ def update_property(request, property_id):
             },
             status=400,
         )
-    
+
     check_property_number_query = """
     MATCH (p:Property)
     WHERE p.property_number = $property_number
@@ -1128,9 +1165,9 @@ def update_property(request, property_id):
             },
             status=400,
         )
-        
+
     estate_query = """
-    MATCH (e:Estate {estate_id:$estate_id})
+    MATCH (e:Estate {estate_id: $estate_id})
     RETURN e
     LIMIT 1
     """
@@ -1150,24 +1187,19 @@ def update_property(request, property_id):
             },
             status=404,
         )
-    
-    
+
     update_query = """
-    MATCH (p:Property {property_id:$property_id})
-    MATCH (newEstate:Estate {estate_id:$estate_id})
-    
+    MATCH (p:Property {property_id: $property_id})
+    MATCH (newEstate:Estate {estate_id: $estate_id})
     OPTIONAL MATCH (:Estate)-[r:HAS_PROPERTY]->(p)
     DELETE r
-
     MERGE (newEstate)-[:HAS_PROPERTY]->(p)
-
     SET
         p.property_number = $property_number,
         p.property_type = $property_type,
         p.bedrooms = $bedrooms,
         p.bathrooms = $bathrooms,
         p.status = $status
-
     RETURN
         p.property_id AS property_id,
         p.property_number AS property_number,
@@ -1175,10 +1207,8 @@ def update_property(request, property_id):
         p.bedrooms AS bedrooms,
         p.bathrooms AS bathrooms,
         p.status AS status,
-
         newEstate.estate_id AS estate_id,
         newEstate.name AS estate_name,
-
         toString(p.created_at) AS created_at
     """
 
@@ -1193,16 +1223,16 @@ def update_property(request, property_id):
             "bathrooms": bathrooms,
             "status": status_value,
         }
-)
-    
+    )
+
     db.close()
 
     return Response(
-    {
-        "message": "Property updated successfully.",
-        "property": updated_property[0]
-    }
-)
+        {
+            "message": "Property updated successfully.",
+            "property": updated_property[0]
+        }
+    )
 
 @api_view(["DELETE"])
 @permission_classes([IsAuthenticated])
