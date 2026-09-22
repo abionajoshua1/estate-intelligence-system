@@ -49,6 +49,13 @@ from .cypher_normalizer import normalize_cypher
 from rest_framework.views import APIView
 from rest_framework.response import Response
 
+from .authorization import (
+    get_authorization_context,
+    is_global_access,
+    authorize_estate,
+    AuthorizationError,
+)
+
 
 # =========================
 # INTENTS
@@ -746,34 +753,75 @@ def link_resident_account(request):
 @permission_classes([IsAuthenticated])
 def get_properties(request):
 
-    query = """
-    MATCH (e:Estate)-[:HAS_PROPERTY]->(p:Property)
+    try:
+        context = get_authorization_context(request.user)
+    except (AuthorizationError, ValueError) as exc:
+        return Response(
+            {"error": str(exc)},
+            status=403,
+        )
 
-    OPTIONAL MATCH (r:Resident)-[:LIVES_IN]->(p)
+    if is_global_access(context):
+        query = """
+        MATCH (e:Estate)-[:HAS_PROPERTY]->(p:Property)
 
-    RETURN
-        p.property_id AS property_id,
-        p.property_number AS property_number,
-        p.property_type AS property_type,
-        p.bedrooms AS bedrooms,
-        p.bathrooms AS bathrooms,
-        p.status AS status,
+        OPTIONAL MATCH (r:Resident)-[:LIVES_IN]->(p)
 
-        e.estate_id AS estate_id,
-        e.name AS estate_name,
+        RETURN
+            p.property_id AS property_id,
+            p.property_number AS property_number,
+            p.property_type AS property_type,
+            p.bedrooms AS bedrooms,
+            p.bathrooms AS bathrooms,
+            p.status AS status,
 
-        r.resident_id AS resident_id,
-        r.name AS resident_name,
+            e.estate_id AS estate_id,
+            e.name AS estate_name,
 
-        toString(p.created_at) AS created_at
+            r.resident_id AS resident_id,
+            r.name AS resident_name,
 
-    ORDER BY e.name, p.property_number
-    """
+            toString(p.created_at) AS created_at
+
+        ORDER BY e.name, p.property_number
+        """
+
+        parameters = {}
+
+    else:
+        query = """
+        MATCH (e:Estate {estate_id: $estate_id})
+              -[:HAS_PROPERTY]->(p:Property)
+
+        OPTIONAL MATCH (r:Resident)-[:LIVES_IN]->(p)
+
+        RETURN
+            p.property_id AS property_id,
+            p.property_number AS property_number,
+            p.property_type AS property_type,
+            p.bedrooms AS bedrooms,
+            p.bathrooms AS bathrooms,
+            p.status AS status,
+
+            e.estate_id AS estate_id,
+            e.name AS estate_name,
+
+            r.resident_id AS resident_id,
+            r.name AS resident_name,
+
+            toString(p.created_at) AS created_at
+
+        ORDER BY e.name, p.property_number
+        """
+
+        parameters = {
+            "estate_id": context["estate_id"],
+        }
 
     db = Neo4jConnection()
 
     try:
-        properties = db.query(query)
+        properties = db.query(query, parameters)
     finally:
         db.close()
 
@@ -786,12 +834,30 @@ def create_property(request):
 
     data = request.data
 
-    property_number = data.get("property_number", "").strip()
     estate_id = data.get("estate_id", "").strip()
+    property_number = data.get("property_number", "").strip()
     property_type = data.get("property_type", "").strip()
     bedrooms = data.get("bedrooms")
     bathrooms = data.get("bathrooms")
     status_value = data.get("status", "").strip()
+
+    # Authorization
+    try:
+        context = get_authorization_context(request.user)
+
+        if context["role"] not in ["manager", "admin"]:
+            return Response(
+                {"error": "You are not authorized to create properties."},
+                status=403,
+            )
+
+        authorize_estate(context, estate_id)
+
+    except (AuthorizationError, ValueError) as exc:
+        return Response(
+            {"error": str(exc)},
+            status=403,
+        )
 
     if not all([
         estate_id,
@@ -836,11 +902,11 @@ def create_property(request):
             },
             status=400,
         )
-    
+
     db = Neo4jConnection()
-    
+
     estate_query = """
-    MATCH (e:Estate {estate_id:$estate_id})
+    MATCH (e:Estate {estate_id: $estate_id})
     RETURN e
     LIMIT 1
     """
@@ -854,15 +920,13 @@ def create_property(request):
 
     if not estate:
         db.close()
-
         return Response(
             {
                 "error": "Estate not found."
             },
             status=404,
         )
-        
-    
+
     last_property_query = """
     MATCH (p:Property)
     RETURN p.property_id AS property_id
@@ -901,22 +965,19 @@ def create_property(request):
             },
             status=400,
         )
-    
+
     create_query = """
-    MATCH (e:Estate {estate_id:$estate_id})
-
+    MATCH (e:Estate {estate_id: $estate_id})
     CREATE (p:Property{
-        property_id:$property_id,
-        property_number:$property_number,
-        property_type:$property_type,
-        bedrooms:$bedrooms,
-        bathrooms:$bathrooms,
-        status:$status,
-        created_at:datetime()
+        property_id: $property_id,
+        property_number: $property_number,
+        property_type: $property_type,
+        bedrooms: $bedrooms,
+        bathrooms: $bathrooms,
+        status: $status,
+        created_at: datetime()
     })
-
     CREATE (e)-[:HAS_PROPERTY]->(p)
-
     RETURN
         p.property_id AS property_id,
         p.property_number AS property_number,
@@ -930,27 +991,27 @@ def create_property(request):
     """
 
     property_node = db.query(
-    create_query,
-    {
-        "property_id": new_id,
-        "property_number": property_number,
-        "property_type": property_type,
-        "bedrooms": bedrooms,
-        "bathrooms": bathrooms,
-        "status": status_value,
-        "estate_id": estate_id,
-    }
-)
-    
+        create_query,
+        {
+            "property_id": new_id,
+            "property_number": property_number,
+            "property_type": property_type,
+            "bedrooms": bedrooms,
+            "bathrooms": bathrooms,
+            "status": status_value,
+            "estate_id": estate_id,
+        }
+    )
+
     db.close()
 
     return Response(
-    {
-        "message": "Property created successfully.",
-        "property": property_node[0]
-    },
-    status=201,
-)
+        {
+            "message": "Property created successfully.",
+            "property": property_node[0]
+        },
+        status=201,
+    )
 
 @api_view(["PUT"])
 @permission_classes([IsAuthenticated])
