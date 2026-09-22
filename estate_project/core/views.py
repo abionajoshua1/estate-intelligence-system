@@ -3423,13 +3423,38 @@ def assign_property_to_resident(request):
             status=400,
         )
 
+    # Authorization
+    try:
+        context = get_authorization_context(request.user)
+
+        # The resident must belong to the manager's
+        # authorized estate.
+        authorize_resource(
+            context,
+            "resident",
+            resident_id,
+        )
+
+        # The property must also belong to the manager's
+        # authorized estate.
+        authorize_resource(
+            context,
+            "property",
+            property_id,
+        )
+
+    except (AuthorizationError, ValueError) as exc:
+        return Response(
+            {"error": str(exc)},
+            status=403,
+        )
+
     db = Neo4jConnection()
 
     try:
-
         # Check resident exists
         resident_query = """
-        MATCH (r:Resident {resident_id:$resident_id})
+        MATCH (r:Resident {resident_id: $resident_id})
         RETURN r
         LIMIT 1
         """
@@ -3451,7 +3476,7 @@ def assign_property_to_resident(request):
 
         # Check property exists
         property_query = """
-        MATCH (p:Property {property_id:$property_id})
+        MATCH (p:Property {property_id: $property_id})
         RETURN p
         LIMIT 1
         """
@@ -3471,34 +3496,11 @@ def assign_property_to_resident(request):
                 status=404,
             )
 
-        # Check if resident already occupies a property
-        existing_relationship = """
-        MATCH (r:Resident {resident_id:$resident_id})-[rel:LIVES_IN]->(:Property)
-        RETURN rel
-        LIMIT 1
-        """
-
-        existing = db.query(
-            existing_relationship,
-            {
-                "resident_id": resident_id
-            }
-        )
-        
-        remove_old_property_query = """
-        MATCH (r:Resident {resident_id:$resident_id})-[rel:LIVES_IN]->(:Property)
-        DELETE rel
-        """
-        
-        db.query(
-            remove_old_property_query,
-            {
-                "resident_id": resident_id
-            },
-        )
-        
+        # Check if property is already occupied
         existing_occupant_query = """
-        MATCH (r:Resident)-[:LIVES_IN]->(p:Property {property_id:$property_id})
+        MATCH (r:Resident)-[:LIVES_IN]->(
+            p:Property {property_id: $property_id}
+        )
         RETURN r.name AS resident_name
         LIMIT 1
         """
@@ -3513,21 +3515,35 @@ def assign_property_to_resident(request):
         if existing_occupant:
             return Response(
                 {
-                    "error": f"Property is already occupied by {existing_occupant[0]['resident_name']}."
+                    "error": (
+                        f"Property is already occupied by "
+                        f"{existing_occupant[0]['resident_name']}."
+                    )
                 },
                 status=400,
             )
-        
+
+        # Remove resident's old property only after
+        # all validation has passed.
+        remove_old_property_query = """
+        MATCH (r:Resident {resident_id: $resident_id})
+              -[rel:LIVES_IN]->(:Property)
+        DELETE rel
+        """
+
+        db.query(
+            remove_old_property_query,
+            {
+                "resident_id": resident_id
+            },
+        )
 
         # Create relationship
         assign_query = """
-        MATCH (r:Resident {resident_id:$resident_id})
-        MATCH (p:Property {property_id:$property_id})
-
+        MATCH (r:Resident {resident_id: $resident_id})
+        MATCH (p:Property {property_id: $property_id})
         CREATE (r)-[:LIVES_IN]->(p)
-        
         SET p.status = "Occupied"
-
         RETURN
             r.resident_id AS resident_id,
             r.name AS resident_name,
@@ -3556,7 +3572,7 @@ def assign_property_to_resident(request):
         db.close()
         
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsManagerOrAdmin])
 def assign_property_to_complaint(request):
 
     data = request.data
@@ -3572,13 +3588,36 @@ def assign_property_to_complaint(request):
             status=400,
         )
 
+    # Authorization
+    try:
+        context = get_authorization_context(request.user)
+
+        # Complaint must belong to the user's authorized estate.
+        authorize_resource(
+            context,
+            "complaint",
+            complaint_id,
+        )
+
+        # Property must belong to the user's authorized estate.
+        authorize_resource(
+            context,
+            "property",
+            property_id,
+        )
+
+    except (AuthorizationError, ValueError) as exc:
+        return Response(
+            {"error": str(exc)},
+            status=403,
+        )
+
     db = Neo4jConnection()
 
     try:
-
         # Check complaint exists
         complaint_query = """
-        MATCH (c:Complaint {complaint_id:$complaint_id})
+        MATCH (c:Complaint {complaint_id: $complaint_id})
         RETURN c
         LIMIT 1
         """
@@ -3600,7 +3639,7 @@ def assign_property_to_complaint(request):
 
         # Check property exists
         property_query = """
-        MATCH (p:Property {property_id:$property_id})
+        MATCH (p:Property {property_id: $property_id})
         RETURN p
         LIMIT 1
         """
@@ -3619,17 +3658,14 @@ def assign_property_to_complaint(request):
                 },
                 status=404,
             )
-            
+
         # Create relationship
         assign_query = """
-        MATCH (c:Complaint {complaint_id:$complaint_id})
-        MATCH (p:Property {property_id:$property_id})
-
+        MATCH (c:Complaint {complaint_id: $complaint_id})
+        MATCH (p:Property {property_id: $property_id})
         OPTIONAL MATCH (c)-[old:ABOUT]->(:Property)
         DELETE old
-
         CREATE (c)-[:ABOUT]->(p)
-
         RETURN
             c.complaint_id AS complaint_id,
             p.property_id AS property_id,
@@ -3654,6 +3690,7 @@ def assign_property_to_complaint(request):
 
     finally:
         db.close()
+        
         
 @api_view(["POST"])
 @permission_classes([IsManagerOrAdmin])
