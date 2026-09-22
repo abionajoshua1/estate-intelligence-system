@@ -1238,11 +1238,38 @@ def update_property(request, property_id) -> Response:
 @permission_classes([IsAuthenticated])
 def delete_property(request, property_id):
 
+    property_id = str(property_id).strip()
+
+    # Authorization
+    try:
+        context = get_authorization_context(request.user)
+
+        # Only managers and admins can delete properties
+        if context["role"] not in ["manager", "admin"]:
+            return Response(
+                {
+                    "error": "You are not authorized to delete properties."
+                },
+                status=403,
+            )
+
+        # Property must belong to the user's authorized estate.
+        authorize_resource(
+            context,
+            "property",
+            property_id,
+        )
+
+    except (AuthorizationError, ValueError) as exc:
+        return Response(
+            {"error": str(exc)},
+            status=403,
+        )
+
     db = Neo4jConnection()
 
     query = """
     MATCH (p:Property {property_id: $property_id})
-
     RETURN
         p.property_id AS property_id
     """
@@ -1262,12 +1289,10 @@ def delete_property(request, property_id):
             },
             status=404,
         )
-    
+
     delete_query = """
     MATCH (p:Property {property_id: $property_id})
-    
     OPTIONAL MATCH (c:Complaint)-[:ABOUT]->(p)
-    
     DETACH DELETE c, p
     """
 
@@ -1281,10 +1306,12 @@ def delete_property(request, property_id):
     db.close()
 
     return Response(
-    {
-        "message": "Property deleted successfully."
-    }
-)
+        {
+            "message": "Property deleted successfully."
+        }
+    )
+    
+    
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
