@@ -5,6 +5,7 @@ import re
 from django.contrib.auth.models import User
 
 from django import db
+from django.db.models import query
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -590,10 +591,27 @@ def update_resident(request, resident_id):
     )
 
 @api_view(["DELETE"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsManagerOrAdmin])
 def delete_resident(request, resident_id):
+    
+    try:
+        context = get_authorization_context(request.user)
+
+        authorize_resource(
+            context,
+            "resident",
+            resident_id,
+        )
+
+    except (AuthorizationError, ValueError) as exc:
+        return Response(
+            {"error": str(exc)},
+            status=403,
+        )
+
 
     db = Neo4jConnection()
+
 
     check_query = """
     MATCH (r:Resident {resident_id: $resident_id})
@@ -653,6 +671,21 @@ def link_resident_account(request):
                 "error": "User ID and Resident ID are required."
             },
             status=400,
+        )
+        
+    try:
+        context = get_authorization_context(request.user)
+
+        authorize_resource(
+            context,
+            "resident",
+            resident_id,
+        )
+
+    except (AuthorizationError, ValueError) as exc:
+        return Response(
+            {"error": str(exc)},
+            status=403,
         )
 
     # ----------------------------------------------------------
@@ -766,7 +799,7 @@ def link_resident_account(request):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsManagerOrAdmin])
 def get_properties(request):
 
     try:
@@ -845,7 +878,7 @@ def get_properties(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsManagerOrAdmin])
 def create_property(request):
 
     data = request.data
@@ -1030,7 +1063,7 @@ def create_property(request):
     )
 
 @api_view(["PUT"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsManagerOrAdmin])
 def update_property(request, property_id) -> Response:
 
     property_id = str(property_id).strip()
@@ -1435,6 +1468,31 @@ def create_complaint(request):
             status=400,
         )
 
+    # ----------------------------------------------------------
+    # Authorization
+    # ----------------------------------------------------------
+
+    try:
+        context = get_authorization_context(request.user)
+
+        authorize_resource(
+            context,
+            "resident",
+            resident_id,
+        )
+
+        authorize_resource(
+            context,
+            "property",
+            property_id,
+        )
+
+    except (AuthorizationError, ValueError) as exc:
+        return Response(
+            {"error": str(exc)},
+            status=403,
+        )
+
     db = Neo4jConnection()
 
     try:
@@ -1506,10 +1564,13 @@ def create_complaint(request):
 
         if last:
             current_id = last[0]["complaint_id"]
+
             number = int(
                 current_id.replace("C", "")
             )
+
             new_id = f"C{number + 1:03d}"
+
         else:
             new_id = "C001"
 
@@ -1554,15 +1615,15 @@ def create_complaint(request):
                 "description": description,
                 "category": category,
                 "priority": priority,
-                "status": status,
             }
         )
-        
+
         # ----------------------------------------------------------
         # Create notification for the resident
         # ----------------------------------------------------------
 
         if role == "resident":
+
             Notification.objects.create(
                 user=request.user,
                 title="Complaint Submitted",
@@ -1584,10 +1645,20 @@ def create_complaint(request):
     finally:
         db.close()
         
+ 
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def get_complaints(request):
+
+    try:
+        context = get_authorization_context(request.user)
+    except (AuthorizationError, ValueError) as exc:
+        return Response(
+            {"error": str(exc)},
+            status=403,
+        )
+
     try:
         page = int(request.query_params.get("page", 1))
     except ValueError:
@@ -1595,7 +1666,7 @@ def get_complaints(request):
             {"error": "Page must be a number."},
             status=400,
         )
-    
+
     try:
         page_size = int(request.query_params.get("page_size", 10))
     except ValueError:
@@ -1603,19 +1674,19 @@ def get_complaints(request):
             {"error": "Page size must be a number."},
             status=400,
         )
-    
+
     if page < 1:
         return Response(
             {"error": "Page must be at least 1."},
             status=400,
         )
-        
+
     if page_size < 1:
         return Response(
             {"error": "Page size must be at least 1."},
             status=400,
         )
-        
+
     if page_size > 100:
         return Response(
             {"error": "Page size cannot exceed 100."},
@@ -1629,32 +1700,43 @@ def get_complaints(request):
         "role",
         None,
     )
-    
+
     status = request.query_params.get("status")
     priority = request.query_params.get("priority")
     category = request.query_params.get("category")
-    
-    where_clause = ""
+
+    conditions = []
+    parameters = {
+        "skip": skip,
+        "page_size": page_size,
+        "status": status,
+        "priority": priority,
+        "category": category,
+    }
 
     if status:
-        where_clause = "WHERE c.status = $status"
-        
-    if priority:
-        if where_clause:
-            where_clause += " AND c.priority = $priority"
-        else:
-            where_clause = "WHERE c.priority = $priority"
-            
-    if category:
-        if where_clause:
-            where_clause += " AND c.category = $category"
-        else:
-            where_clause = "WHERE c.category = $category"
+        conditions.append("c.status = $status")
 
-    if role in ["manager", "admin"]:
+    if priority:
+        conditions.append("c.priority = $priority")
+
+    if category:
+        conditions.append("c.category = $category")
+
+    if role == "manager":
+
+        conditions.insert(0, "e.estate_id = $estate_id")
+        parameters["estate_id"] = context["estate_id"]
+
+        where_clause = ""
+
+        if conditions:
+            where_clause = "WHERE " + " AND ".join(conditions)
+
         query = f"""
-        MATCH (r:Resident)-[:RAISED]->(c:Complaint)-[:ABOUT]->(p:Property)
-        
+        MATCH (e:Estate)-[:HAS_PROPERTY]->(p:Property)
+              <-[:ABOUT]-(c:Complaint)<-[:RAISED]-(r:Resident)
+
         {where_clause}
 
         RETURN
@@ -1671,19 +1753,44 @@ def get_complaints(request):
             toString(c.created_at) AS created_at
 
         ORDER BY c.created_at DESC, c.complaint_id DESC
+
         SKIP $skip
         LIMIT $page_size + 1
         """
 
-        parameters = {
-            "skip": skip,
-            "page_size": page_size,
-            "status": status,
-            "priority": priority,
-            "category": category,
-        }
+    elif role == "admin":
+
+        where_clause = ""
+
+        if conditions:
+            where_clause = "WHERE " + " AND ".join(conditions)
+
+        query = f"""
+        MATCH (r:Resident)-[:RAISED]->(c:Complaint)-[:ABOUT]->(p:Property)
+
+        {where_clause}
+
+        RETURN
+            c.complaint_id AS complaint_id,
+            r.resident_id AS resident_id,
+            r.name AS resident_name,
+            p.property_id AS property_id,
+            p.property_number AS property_number,
+            c.title AS title,
+            c.description AS description,
+            c.category AS category,
+            c.priority AS priority,
+            c.status AS status,
+            toString(c.created_at) AS created_at
+
+        ORDER BY c.created_at DESC, c.complaint_id DESC
+
+        SKIP $skip
+        LIMIT $page_size + 1
+        """
 
     elif role == "resident":
+
         resident_id = request.user.profile.resident_id
 
         if not resident_id:
@@ -1694,10 +1801,14 @@ def get_complaints(request):
                 status=403,
             )
 
+        conditions.insert(0, "r.resident_id = $resident_id")
+        parameters["resident_id"] = resident_id
+
+        where_clause = "WHERE " + " AND ".join(conditions)
+
         query = f"""
-        MATCH (r:Resident {resident_id: $resident_id})
-            -[:RAISED]->(c:Complaint)-[:ABOUT]->(p:Property)
-            
+        MATCH (r:Resident)-[:RAISED]->(c:Complaint)-[:ABOUT]->(p:Property)
+
         {where_clause}
 
         RETURN
@@ -1714,18 +1825,11 @@ def get_complaints(request):
             toString(c.created_at) AS created_at
 
         ORDER BY c.created_at DESC, c.complaint_id DESC
+
         SKIP $skip
         LIMIT $page_size + 1
         """
 
-        parameters = {
-            "resident_id": resident_id,
-            "skip": skip,
-            "page_size": page_size,
-            "status": status,
-            "priority": priority,
-            "category": category,
-        }
     else:
         return Response(
             {"error": "Invalid user role."},
@@ -1739,10 +1843,10 @@ def get_complaints(request):
             query,
             parameters,
         )
-        
+
         has_next = len(complaints) > page_size
         complaints = complaints[:page_size]
-        
+
     finally:
         db.close()
 
@@ -1752,7 +1856,7 @@ def get_complaints(request):
         "has_next": has_next,
         "results": complaints,
     })
-
+    
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
@@ -1761,20 +1865,46 @@ def global_search(request):
 
     if not query_text:
         return Response([])
+    
+    # ----------------------------------------------------------
+    # Authorization
+    # ----------------------------------------------------------
+
+    try:
+        context = get_authorization_context(request.user)
+
+    except (AuthorizationError, ValueError) as exc:
+        return Response(
+            {"error": str(exc)},
+            status=403,
+        )
 
     db = Neo4jConnection()
 
     query = """
     CALL {
         MATCH (r:Resident)
-        WHERE
-            toLower(coalesce(r.name, "")) CONTAINS toLower($q)
-            OR toLower(coalesce(r.email, "")) CONTAINS toLower($q)
-            OR toLower(coalesce(r.phone, "")) CONTAINS toLower($q)
-            OR toLower(coalesce(r.resident_id, "")) CONTAINS toLower($q)
-
         OPTIONAL MATCH (r)-[:LIVES_IN]->(p:Property)
         OPTIONAL MATCH (e:Estate)-[:HAS_PROPERTY]->(p)
+        WHERE
+            (
+                $scope = "global"
+                OR e.estate_id = $estate_id
+            )
+            AND (
+                toLower(coalesce(r.name, "")) CONTAINS toLower($q)
+                OR toLower(coalesce(r.email, "")) CONTAINS toLower($q)
+                OR toLower(coalesce(r.phone, "")) CONTAINS toLower($q)
+                OR toLower(coalesce(r.resident_id, "")) CONTAINS toLower($q)
+            )
+        RETURN
+            "Resident" AS type,
+            r.resident_id AS id,
+            r.name AS title,
+            coalesce(r.email, "") AS subtitle,
+            coalesce(e.name, "") AS related_estate,
+            coalesce(p.property_number, "") AS related_property,
+            "" AS related_resident
 
         RETURN
             "Resident" AS type,
@@ -1788,14 +1918,18 @@ def global_search(request):
         UNION ALL
 
         MATCH (p:Property)
-        WHERE
-            toLower(coalesce(p.property_number, "")) CONTAINS toLower($q)
-            OR toLower(coalesce(p.property_type, "")) CONTAINS toLower($q)
-            OR toLower(coalesce(p.property_id, "")) CONTAINS toLower($q)
-
         OPTIONAL MATCH (e:Estate)-[:HAS_PROPERTY]->(p)
         OPTIONAL MATCH (r:Resident)-[:LIVES_IN]->(p)
-
+        WHERE
+            (
+                $scope = "global"
+                OR e.estate_id = $estate_id
+            )
+            AND (
+                toLower(coalesce(p.property_number, "")) CONTAINS toLower($q)
+                OR toLower(coalesce(p.property_type, "")) CONTAINS toLower($q)
+                OR toLower(coalesce(p.property_id, "")) CONTAINS toLower($q)
+            )
         RETURN
             "Property" AS type,
             p.property_id AS id,
@@ -1814,10 +1948,8 @@ def global_search(request):
             OR toLower(coalesce(c.description, "")) CONTAINS toLower($q)
             OR toLower(coalesce(c.complaint_id, "")) CONTAINS toLower($q)
             OR toLower(coalesce(c.status, "")) CONTAINS toLower($q)
-
         OPTIONAL MATCH (r:Resident)-[:RAISED]->(c)
         OPTIONAL MATCH (c)-[:ABOUT]->(p:Property)
-
         RETURN
             "Complaint" AS type,
             c.complaint_id AS id,
@@ -1831,12 +1963,17 @@ def global_search(request):
 
         MATCH (e:Estate)
         WHERE
-            toLower(coalesce(e.name, "")) CONTAINS toLower($q)
-            OR toLower(coalesce(e.estate_id, "")) CONTAINS toLower($q)
-            OR toLower(coalesce(e.address, "")) CONTAINS toLower($q)
-            OR toLower(coalesce(e.city, "")) CONTAINS toLower($q)
-            OR toLower(coalesce(e.state, "")) CONTAINS toLower($q)
-
+            (
+                $scope = "global"
+                OR e.estate_id = $estate_id
+            )
+            AND (
+                toLower(coalesce(e.name, "")) CONTAINS toLower($q)
+                OR toLower(coalesce(e.estate_id, "")) CONTAINS toLower($q)
+                OR toLower(coalesce(e.address, "")) CONTAINS toLower($q)
+                OR toLower(coalesce(e.city, "")) CONTAINS toLower($q)
+                OR toLower(coalesce(e.state, "")) CONTAINS toLower($q)
+            )
         RETURN
             "Estate" AS type,
             e.estate_id AS id,
@@ -1849,14 +1986,18 @@ def global_search(request):
         UNION ALL
 
         MATCH (m:Manager)
-        WHERE
-            toLower(coalesce(m.name, "")) CONTAINS toLower($q)
-            OR toLower(coalesce(m.email, "")) CONTAINS toLower($q)
-            OR toLower(coalesce(m.phone, "")) CONTAINS toLower($q)
-            OR toLower(coalesce(m.manager_id, "")) CONTAINS toLower($q)
-
         OPTIONAL MATCH (e:Estate)-[:HAS_MANAGER]->(m)
-
+        WHERE
+            (
+                $scope = "global"
+                OR e.estate_id = $estate_id
+            )
+            AND (
+                toLower(coalesce(m.name, "")) CONTAINS toLower($q)
+                OR toLower(coalesce(m.email, "")) CONTAINS toLower($q)
+                OR toLower(coalesce(m.phone, "")) CONTAINS toLower($q)
+                OR toLower(coalesce(m.manager_id, "")) CONTAINS toLower($q)
+            )
         RETURN
             "Manager" AS type,
             m.manager_id AS id,
@@ -1869,14 +2010,18 @@ def global_search(request):
         UNION ALL
 
         MATCH (t:MaintenanceTeam)
-        WHERE
-            toLower(coalesce(t.team_name, "")) CONTAINS toLower($q)
-            OR toLower(coalesce(t.specialization, "")) CONTAINS toLower($q)
-            OR toLower(coalesce(t.email, "")) CONTAINS toLower($q)
-            OR toLower(coalesce(t.team_id, "")) CONTAINS toLower($q)
-
         OPTIONAL MATCH (e:Estate)-[:HAS_MAINTENANCE_TEAM]->(t)
-
+        WHERE
+            (
+                $scope = "global"
+                OR e.estate_id = $estate_id
+            )
+            AND (
+                toLower(coalesce(t.team_name, "")) CONTAINS toLower($q)
+                OR toLower(coalesce(t.specialization, "")) CONTAINS toLower($q)
+                OR toLower(coalesce(t.email, "")) CONTAINS toLower($q)
+                OR toLower(coalesce(t.team_id, "")) CONTAINS toLower($q)
+            )
         RETURN
             "MaintenanceTeam" AS type,
             t.team_id AS id,
@@ -1899,12 +2044,19 @@ def global_search(request):
     """
 
     try:
-        results = db.query(query, {"q": query_text})
+        results = db.query(
+            query,
+            {
+                "q": query_text,
+                "estate_id": context.get("estate_id"),
+                "scope": context.get("scope"),
+            },
+        )
+        
     finally:
         db.close()
 
     return Response(results)
-
 
 
 @api_view(["PUT"])
