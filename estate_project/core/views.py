@@ -1886,6 +1886,8 @@ def global_search(request):
         MATCH (r:Resident)
         OPTIONAL MATCH (r)-[:LIVES_IN]->(p:Property)
         OPTIONAL MATCH (e:Estate)-[:HAS_PROPERTY]->(p)
+
+        WITH r, p, e
         WHERE
             (
                 $scope = "global"
@@ -1897,14 +1899,6 @@ def global_search(request):
                 OR toLower(coalesce(r.phone, "")) CONTAINS toLower($q)
                 OR toLower(coalesce(r.resident_id, "")) CONTAINS toLower($q)
             )
-        RETURN
-            "Resident" AS type,
-            r.resident_id AS id,
-            r.name AS title,
-            coalesce(r.email, "") AS subtitle,
-            coalesce(e.name, "") AS related_estate,
-            coalesce(p.property_number, "") AS related_property,
-            "" AS related_resident
 
         RETURN
             "Resident" AS type,
@@ -1920,6 +1914,8 @@ def global_search(request):
         MATCH (p:Property)
         OPTIONAL MATCH (e:Estate)-[:HAS_PROPERTY]->(p)
         OPTIONAL MATCH (r:Resident)-[:LIVES_IN]->(p)
+
+        WITH p, e, r
         WHERE
             (
                 $scope = "global"
@@ -1930,6 +1926,7 @@ def global_search(request):
                 OR toLower(coalesce(p.property_type, "")) CONTAINS toLower($q)
                 OR toLower(coalesce(p.property_id, "")) CONTAINS toLower($q)
             )
+
         RETURN
             "Property" AS type,
             p.property_id AS id,
@@ -1942,20 +1939,30 @@ def global_search(request):
         UNION ALL
 
         MATCH (c:Complaint)
-        WHERE
-            toLower(coalesce(c.title, "")) CONTAINS toLower($q)
-            OR toLower(coalesce(c.category, "")) CONTAINS toLower($q)
-            OR toLower(coalesce(c.description, "")) CONTAINS toLower($q)
-            OR toLower(coalesce(c.complaint_id, "")) CONTAINS toLower($q)
-            OR toLower(coalesce(c.status, "")) CONTAINS toLower($q)
         OPTIONAL MATCH (r:Resident)-[:RAISED]->(c)
         OPTIONAL MATCH (c)-[:ABOUT]->(p:Property)
+        OPTIONAL MATCH (e:Estate)-[:HAS_PROPERTY]->(p)
+
+        WITH c, r, p, e
+        WHERE
+            (
+                $scope = "global"
+                OR e.estate_id = $estate_id
+            )
+            AND (
+                toLower(coalesce(c.title, "")) CONTAINS toLower($q)
+                OR toLower(coalesce(c.category, "")) CONTAINS toLower($q)
+                OR toLower(coalesce(c.description, "")) CONTAINS toLower($q)
+                OR toLower(coalesce(c.complaint_id, "")) CONTAINS toLower($q)
+                OR toLower(coalesce(c.status, "")) CONTAINS toLower($q)
+            )
+
         RETURN
             "Complaint" AS type,
             c.complaint_id AS id,
             c.title AS title,
             c.category AS subtitle,
-            "" AS related_estate,
+            coalesce(e.name, "") AS related_estate,
             coalesce(p.property_number, "") AS related_property,
             coalesce(r.name, "") AS related_resident
 
@@ -1987,6 +1994,8 @@ def global_search(request):
 
         MATCH (m:Manager)
         OPTIONAL MATCH (e:Estate)-[:HAS_MANAGER]->(m)
+
+        WITH m, e
         WHERE
             (
                 $scope = "global"
@@ -1998,6 +2007,7 @@ def global_search(request):
                 OR toLower(coalesce(m.phone, "")) CONTAINS toLower($q)
                 OR toLower(coalesce(m.manager_id, "")) CONTAINS toLower($q)
             )
+
         RETURN
             "Manager" AS type,
             m.manager_id AS id,
@@ -2011,6 +2021,8 @@ def global_search(request):
 
         MATCH (t:MaintenanceTeam)
         OPTIONAL MATCH (e:Estate)-[:HAS_MAINTENANCE_TEAM]->(t)
+
+        WITH t, e
         WHERE
             (
                 $scope = "global"
@@ -2022,6 +2034,7 @@ def global_search(request):
                 OR toLower(coalesce(t.email, "")) CONTAINS toLower($q)
                 OR toLower(coalesce(t.team_id, "")) CONTAINS toLower($q)
             )
+
         RETURN
             "MaintenanceTeam" AS type,
             t.team_id AS id,
@@ -2278,8 +2291,19 @@ def delete_complaint(request, complaint_id):
 @permission_classes([IsAuthenticated])
 def get_estates(request):
 
+    try:
+        context = get_authorization_context(request.user)
+    except (AuthorizationError, ValueError) as exc:
+        return Response(
+            {"error": str(exc)},
+            status=403,
+        )
+
     query = """
     MATCH (e:Estate)
+    WHERE
+        $scope = "global"
+        OR e.estate_id = $estate_id
 
     OPTIONAL MATCH (e)-[:HAS_PROPERTY]->(p:Property)
 
@@ -2297,12 +2321,10 @@ def get_estates(request):
         e.city AS city,
         e.state AS state,
         e.status AS status,
-
         property_count,
         occupied_properties,
         available_properties,
         maintenance_properties,
-
         toString(e.created_at) AS created_at
 
     ORDER BY e.name
@@ -2311,7 +2333,13 @@ def get_estates(request):
     db = Neo4jConnection()
 
     try:
-        estates = db.query(query)
+        estates = db.query(
+            query,
+            {
+                "estate_id": context.get("estate_id"),
+                "scope": context.get("scope"),
+            },
+        )
     finally:
         db.close()
 
@@ -2319,7 +2347,7 @@ def get_estates(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAdmin])
 def create_estate(request):
 
     data = request.data
@@ -2369,7 +2397,7 @@ def create_estate(request):
         """
 
         last = db.query(last_estate_query)
-        
+
         current_id = None
 
         if last and last[0]["estate_id"] is not None:
@@ -2378,18 +2406,19 @@ def create_estate(request):
             new_id = f"E{number + 1:03d}"
         else:
             new_id = "E001"
-            
+
         # Check duplicate
         check_query = """
         MATCH (e:Estate)
-        WHERE 
-        (
-            tolower(e.name) = tolower($name) AND
-            tolower(e.city) = tolower($city)
-        )
-        OR
-        tolower(e.address) = tolower($address)
-        
+        WHERE
+            (
+                tolower(e.name) = tolower($name)
+                AND
+                tolower(e.city) = tolower($city)
+            )
+            OR
+            tolower(e.address) = tolower($address)
+
         RETURN e
         LIMIT 1
         """
@@ -2399,7 +2428,7 @@ def create_estate(request):
             {
                 "name": name,
                 "city": city,
-                "address": address
+                "address": address,
             }
         )
 
@@ -2454,18 +2483,18 @@ def create_estate(request):
 
     finally:
         db.close()
-        
-        
+
+
 @api_view(["PUT"])
+@permission_classes([IsAdmin])
 def update_estate(request, estate_id):
 
     db = Neo4jConnection()
 
     try:
-
         # Check estate exists
         estate_query = """
-        MATCH (e:Estate {estate_id:$estate_id})
+        MATCH (e:Estate {estate_id: $estate_id})
         RETURN e
         LIMIT 1
         """
@@ -2528,12 +2557,12 @@ def update_estate(request, estate_id):
             AND
             (
                 (
-                    toLower(e.name)=toLower($name)
+                    toLower(e.name) = toLower($name)
                     AND
-                    toLower(e.city)=toLower($city)
+                    toLower(e.city) = toLower($city)
                 )
                 OR
-                toLower(e.address)=toLower($address)
+                toLower(e.address) = toLower($address)
             )
 
         RETURN e
@@ -2559,14 +2588,13 @@ def update_estate(request, estate_id):
             )
 
         update_query = """
-        MATCH (e:Estate {estate_id:$estate_id})
-
+        MATCH (e:Estate {estate_id: $estate_id})
         SET
-            e.name=$name,
-            e.address=$address,
-            e.city=$city,
-            e.state=$state,
-            e.status=$status
+            e.name = $name,
+            e.address = $address,
+            e.city = $city,
+            e.state = $state,
+            e.status = $status
 
         RETURN
             e.estate_id AS estate_id,
@@ -2600,23 +2628,24 @@ def update_estate(request, estate_id):
 
     finally:
         db.close()
-        
+
+
 @api_view(["DELETE"])
+@permission_classes([IsAdmin])
 def delete_estate(request, estate_id):
 
     db = Neo4jConnection()
 
     try:
-
         # Check estate exists
         estate = db.query(
             """
-            MATCH (e:Estate {estate_id:$estate_id})
+            MATCH (e:Estate {estate_id: $estate_id})
             RETURN e
             LIMIT 1
             """,
             {
-                "estate_id": estate_id
+                "estate_id": estate_id,
             }
         )
 
@@ -2631,11 +2660,13 @@ def delete_estate(request, estate_id):
         # Check if estate still has properties
         properties = db.query(
             """
-            MATCH (e:Estate {estate_id:$estate_id})-[:HAS_PROPERTY]->(p:Property)
+            MATCH (e:Estate {estate_id: $estate_id})
+                  -[:HAS_PROPERTY]->(p:Property)
+
             RETURN COUNT(p) AS property_count
             """,
             {
-                "estate_id": estate_id
+                "estate_id": estate_id,
             }
         )
 
@@ -2649,11 +2680,11 @@ def delete_estate(request, estate_id):
 
         db.query(
             """
-            MATCH (e:Estate {estate_id:$estate_id})
+            MATCH (e:Estate {estate_id: $estate_id})
             DETACH DELETE e
             """,
             {
-                "estate_id": estate_id
+                "estate_id": estate_id,
             }
         )
 
@@ -2669,7 +2700,7 @@ def delete_estate(request, estate_id):
         
         
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsManagerOrAdmin])
 def create_manager(request):
 
     data = request.data
@@ -2707,10 +2738,19 @@ def create_manager(request):
             status=400,
         )
 
+    # Authorization
+    try:
+        context = get_authorization_context(request.user)
+        authorize_estate(context, estate_id)
+    except (AuthorizationError, ValueError) as exc:
+        return Response(
+            {"error": str(exc)},
+            status=403,
+        )
+
     db = Neo4jConnection()
 
     try:
-
         # Generate Manager ID
         last_manager_query = """
         MATCH (m:Manager)
@@ -2730,7 +2770,7 @@ def create_manager(request):
 
         # Check Estate Exists
         estate_query = """
-        MATCH (e:Estate {estate_id:$estate_id})
+        MATCH (e:Estate {estate_id: $estate_id})
         RETURN e
         LIMIT 1
         """
@@ -2752,7 +2792,8 @@ def create_manager(request):
 
         # Check if estate already has a manager
         existing_manager_query = """
-        MATCH (e:Estate {estate_id:$estate_id})-[:HAS_MANAGER]->(m:Manager)
+        MATCH (e:Estate {estate_id: $estate_id})
+              -[:HAS_MANAGER]->(m:Manager)
         RETURN m
         LIMIT 1
         """
@@ -2797,7 +2838,7 @@ def create_manager(request):
 
         # Create Manager
         create_manager_query = """
-        MATCH (e:Estate {estate_id:$estate_id})
+        MATCH (e:Estate {estate_id: $estate_id})
 
         CREATE (m:Manager {
             manager_id: $manager_id,
@@ -2843,13 +2884,26 @@ def create_manager(request):
 
     finally:
         db.close()
-        
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def get_managers(request):
 
+    try:
+        context = get_authorization_context(request.user)
+    except (AuthorizationError, ValueError) as exc:
+        return Response(
+            {"error": str(exc)},
+            status=403,
+        )
+
     query = """
     MATCH (e:Estate)-[:HAS_MANAGER]->(m:Manager)
+
+    WHERE
+        $scope = "global"
+        OR e.estate_id = $estate_id
 
     RETURN
         m.manager_id AS manager_id,
@@ -2867,7 +2921,13 @@ def get_managers(request):
     db = Neo4jConnection()
 
     try:
-        managers = db.query(query)
+        managers = db.query(
+            query,
+            {
+                "estate_id": context.get("estate_id"),
+                "scope": context.get("scope"),
+            },
+        )
     finally:
         db.close()
 
@@ -2875,16 +2935,33 @@ def get_managers(request):
 
 
 @api_view(["PUT"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsManagerOrAdmin])
 def update_manager(request, manager_id):
-    
-    db = Neo4jConnection()
-    
+
+    # Authorization
     try:
-        
+        context = get_authorization_context(request.user)
+
+        # Existing manager must belong to the user's
+        # authorized estate unless the user is an admin.
+        authorize_resource(
+            context,
+            "manager",
+            manager_id,
+        )
+
+    except (AuthorizationError, ValueError) as exc:
+        return Response(
+            {"error": str(exc)},
+            status=403,
+        )
+
+    db = Neo4jConnection()
+
+    try:
         # Check if manager exists
         check_query = """
-        MATCH (m:Manager {manager_id:$manager_id})
+        MATCH (m:Manager {manager_id: $manager_id})
         RETURN m
         LIMIT 1
         """
@@ -2925,21 +3002,30 @@ def update_manager(request, manager_id):
                 },
                 status=400,
             )
-            
-        
+
+        # The target estate must also be inside the
+        # user's authorized scope.
+        try:
+            authorize_estate(context, estate_id)
+        except AuthorizationError as exc:
+            return Response(
+                {"error": str(exc)},
+                status=403,
+            )
+
         estate_query = """
-        MATCH (e:Estate {estate_id:$estate_id})
+        MATCH (e:Estate {estate_id: $estate_id})
         RETURN e
         LIMIT 1
         """
-        
+
         estate = db.query(
             estate_query,
             {
                 "estate_id": estate_id
             }
         )
-        
+
         if not estate:
             return Response(
                 {
@@ -2947,15 +3033,16 @@ def update_manager(request, manager_id):
                 },
                 status=404,
             )
-            
+
         duplicate_email_query = """
         MATCH (m:Manager)
-        WHERE toLower(m.email) = toLower($email)
-        AND m.manager_id <> $manager_id
+        WHERE
+            toLower(m.email) = toLower($email)
+            AND m.manager_id <> $manager_id
         RETURN m
         LIMIT 1
         """
-        
+
         duplicate = db.query(
             duplicate_email_query,
             {
@@ -2963,7 +3050,7 @@ def update_manager(request, manager_id):
                 "manager_id": manager_id
             }
         )
-        
+
         if duplicate:
             return Response(
                 {
@@ -2971,14 +3058,17 @@ def update_manager(request, manager_id):
                 },
                 status=400,
             )
-            
+
         manage_check_query = """
-        MATCH (e:Estate {estate_id:$estate_id})-[:HAS_MANAGER]->(m:Manager)
+        MATCH (e:Estate {estate_id: $estate_id})
+              -[:HAS_MANAGER]->(m:Manager)
+
         WHERE m.manager_id <> $manager_id
+
         RETURN m
         LIMIT 1
         """
-        
+
         existing = db.query(
             manage_check_query,
             {
@@ -2986,7 +3076,7 @@ def update_manager(request, manager_id):
                 "manager_id": manager_id
             }
         )
-        
+
         if existing:
             return Response(
                 {
@@ -2994,12 +3084,12 @@ def update_manager(request, manager_id):
                 },
                 status=400,
             )
-            
+
         db.query(
             """
-            MATCH (e:Estate {estate_id:$estate_id})
-            MATCH (m:Manager {manager_id:$manager_id})
-            
+            MATCH (e:Estate {estate_id: $estate_id})
+            MATCH (m:Manager {manager_id: $manager_id})
+
             CREATE (e)-[:HAS_MANAGER]->(m)
             """,
             {
@@ -3007,16 +3097,16 @@ def update_manager(request, manager_id):
                 "manager_id": manager_id
             }
         )
-        
+
         update_query = """
-        MATCH (m:Manager {manager_id:$manager_id})
-        
+        MATCH (m:Manager {manager_id: $manager_id})
+
         SET
             m.name = $name,
             m.email = $email,
             m.phone = $phone,
             m.status = $status
-            
+
         RETURN
             m.manager_id AS manager_id,
             m.name AS name,
@@ -3025,7 +3115,7 @@ def update_manager(request, manager_id):
             m.status AS status,
             toString(m.created_at) AS created_at
         """
-        
+
         updated = db.query(
             update_query,
             {
@@ -3036,30 +3126,44 @@ def update_manager(request, manager_id):
                 "status": status_value
             }
         )
-        
+
         return Response(
             {
                 "message": "Manager updated successfully.",
                 "manager": updated[0],
             },
         )
-        
+
     finally:
         db.close()
-        
-        
+
+
 @api_view(["DELETE"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsManagerOrAdmin])
 def delete_manager(request, manager_id):
+
+    # Authorization
+    try:
+        context = get_authorization_context(request.user)
+
+        authorize_resource(
+            context,
+            "manager",
+            manager_id,
+        )
+
+    except (AuthorizationError, ValueError) as exc:
+        return Response(
+            {"error": str(exc)},
+            status=403,
+        )
 
     db = Neo4jConnection()
 
     try:
-
         # Check manager exists
         query = """
-        MATCH (m:Manager {manager_id:$manager_id})
-
+        MATCH (m:Manager {manager_id: $manager_id})
         RETURN
             m.manager_id AS manager_id
         """
@@ -3080,7 +3184,7 @@ def delete_manager(request, manager_id):
             )
 
         delete_query = """
-        MATCH (m:Manager {manager_id:$manager_id})
+        MATCH (m:Manager {manager_id: $manager_id})
         DETACH DELETE m
         """
 
@@ -3100,10 +3204,10 @@ def delete_manager(request, manager_id):
     finally:
         db.close()
         
+        
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsManagerOrAdmin])
 def create_maintenance_team(request):
-
     data = request.data
 
     estate_id = data.get("estate_id", "").strip()
@@ -3122,9 +3226,7 @@ def create_maintenance_team(request):
         status_value,
     ]):
         return Response(
-            {
-                "error": "All fields are required."
-            },
+            {"error": "All fields are required."},
             status=400,
         )
 
@@ -3135,16 +3237,22 @@ def create_maintenance_team(request):
 
     if status_value not in allowed_status:
         return Response(
-            {
-                "error": "Invalid status."
-            },
+            {"error": "Invalid status."},
             status=400,
+        )
+
+    try:
+        context = get_authorization_context(request.user)
+        authorize_estate(context, estate_id)
+    except (AuthorizationError, ValueError) as exc:
+        return Response(
+            {"error": str(exc)},
+            status=403,
         )
 
     db = Neo4jConnection()
 
     try:
-        
         last_team_query = """
         MATCH (t:MaintenanceTeam)
         RETURN t.team_id AS team_id
@@ -3160,9 +3268,9 @@ def create_maintenance_team(request):
             new_id = f"T{number + 1:03d}"
         else:
             new_id = "T001"
-            
+
         estate_query = """
-        MATCH (e:Estate {estate_id:$estate_id})
+        MATCH (e:Estate {estate_id: $estate_id})
         RETURN e
         LIMIT 1
         """
@@ -3170,21 +3278,22 @@ def create_maintenance_team(request):
         estate = db.query(
             estate_query,
             {
-                "estate_id": estate_id
-            }
+                "estate_id": estate_id,
+            },
         )
 
         if not estate:
             return Response(
                 {
-                    "error": "Estate not found."
+                    "error": "Estate not found.",
                 },
                 status=404,
             )
-   
+
         duplicate_team_query = """
-        MATCH (e:Estate {estate_id:$estate_id})-[:HAS_MAINTENANCE_TEAM]->(t:MaintenanceTeam)
-        WHERE toLower(t.team_name)=toLower($team_name)
+        MATCH (e:Estate {estate_id: $estate_id})
+              -[:HAS_MAINTENANCE_TEAM]->(t:MaintenanceTeam)
+        WHERE toLower(t.team_name) = toLower($team_name)
         RETURN t
         LIMIT 1
         """
@@ -3194,20 +3303,22 @@ def create_maintenance_team(request):
             {
                 "estate_id": estate_id,
                 "team_name": team_name,
-            }
+            },
         )
 
         if duplicate_team:
             return Response(
                 {
-                    "error": "This estate already has a team with this name."
+                    "error": (
+                        "This estate already has a team with this name."
+                    ),
                 },
                 status=400,
             )
-            
+
         duplicate_email_query = """
         MATCH (t:MaintenanceTeam)
-        WHERE toLower(t.email)=toLower($email)
+        WHERE toLower(t.email) = toLower($email)
         RETURN t
         LIMIT 1
         """
@@ -3215,33 +3326,30 @@ def create_maintenance_team(request):
         duplicate_email = db.query(
             duplicate_email_query,
             {
-                "email": email
-            }
+                "email": email,
+            },
         )
 
         if duplicate_email:
             return Response(
                 {
-                    "error": "Email already exists."
+                    "error": "Email already exists.",
                 },
                 status=400,
             )
-            
+
         create_query = """
-        MATCH (e:Estate {estate_id:$estate_id})
-
-        CREATE (t:MaintenanceTeam{
-            team_id:$team_id,
-            team_name:$team_name,
-            specialization:$specialization,
-            phone:$phone,
-            email:$email,
-            status:$status,
-            created_at:datetime()
+        MATCH (e:Estate {estate_id: $estate_id})
+        CREATE (t:MaintenanceTeam {
+            team_id: $team_id,
+            team_name: $team_name,
+            specialization: $specialization,
+            phone: $phone,
+            email: $email,
+            status: $status,
+            created_at: datetime()
         })
-
         CREATE (e)-[:HAS_MAINTENANCE_TEAM]->(t)
-
         RETURN
             t.team_id AS team_id,
             t.team_name AS team_name,
@@ -3253,7 +3361,7 @@ def create_maintenance_team(request):
             e.name AS estate_name,
             toString(t.created_at) AS created_at
         """
-        
+
         team = db.query(
             create_query,
             {
@@ -3264,7 +3372,7 @@ def create_maintenance_team(request):
                 "phone": phone,
                 "email": email,
                 "status": status_value,
-            }
+            },
         )
 
         return Response(
@@ -3277,15 +3385,26 @@ def create_maintenance_team(request):
 
     finally:
         db.close()
-        
+
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def get_maintenance_teams(request):
+    try:
+        context = get_authorization_context(request.user)
+    except (AuthorizationError, ValueError) as exc:
+        return Response(
+            {
+                "error": str(exc),
+            },
+            status=403,
+        )
 
     query = """
     MATCH (e:Estate)-[:HAS_MAINTENANCE_TEAM]->(t:MaintenanceTeam)
-
+    WHERE
+        $scope = "global"
+        OR e.estate_id = $estate_id
     RETURN
         t.team_id AS team_id,
         t.team_name AS team_name,
@@ -3293,19 +3412,22 @@ def get_maintenance_teams(request):
         t.phone AS phone,
         t.email AS email,
         t.status AS status,
-
         e.estate_id AS estate_id,
         e.name AS estate_name,
-
         toString(t.created_at) AS created_at
-
     ORDER BY t.team_name
     """
 
     db = Neo4jConnection()
 
     try:
-        teams = db.query(query)
+        teams = db.query(
+            query,
+            {
+                "estate_id": context.get("estate_id"),
+                "scope": context.get("scope"),
+            },
+        )
     finally:
         db.close()
 
@@ -3315,12 +3437,27 @@ def get_maintenance_teams(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def get_maintenance_team(request, team_id):
+    try:
+        context = get_authorization_context(request.user)
+        authorize_resource(
+            context,
+            "maintenance_team",
+            team_id,
+        )
+    except (AuthorizationError, ValueError) as exc:
+        return Response(
+            {
+                "error": str(exc),
+            },
+            status=403,
+        )
 
     query = """
-    MATCH (e:Estate)-[:HAS_MAINTENANCE_TEAM]->(t:MaintenanceTeam {
-        team_id:$team_id
-    })
-
+    MATCH (e:Estate)-[:HAS_MAINTENANCE_TEAM]->(
+        t:MaintenanceTeam {
+            team_id: $team_id
+        }
+    )
     RETURN
         t.team_id AS team_id,
         t.team_name AS team_name,
@@ -3328,10 +3465,8 @@ def get_maintenance_team(request, team_id):
         t.phone AS phone,
         t.email AS email,
         t.status AS status,
-
         e.estate_id AS estate_id,
         e.name AS estate_name,
-
         toString(t.created_at) AS created_at
     """
 
@@ -3341,8 +3476,8 @@ def get_maintenance_team(request, team_id):
         team = db.query(
             query,
             {
-                "team_id": team_id
-            }
+                "team_id": team_id,
+            },
         )
     finally:
         db.close()
@@ -3350,7 +3485,7 @@ def get_maintenance_team(request, team_id):
     if not team:
         return Response(
             {
-                "error": "Maintenance team not found."
+                "error": "Maintenance team not found.",
             },
             status=404,
         )
@@ -3359,16 +3494,31 @@ def get_maintenance_team(request, team_id):
 
 
 @api_view(["PUT"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsManagerOrAdmin])
 def update_maintenance_team(request, team_id):
+    try:
+        context = get_authorization_context(request.user)
+        authorize_resource(
+            context,
+            "maintenance_team",
+            team_id,
+        )
+    except (AuthorizationError, ValueError) as exc:
+        return Response(
+            {
+                "error": str(exc),
+            },
+            status=403,
+        )
 
     db = Neo4jConnection()
 
     try:
-
         # Check team exists
         query = """
-        MATCH (t:MaintenanceTeam {team_id:$team_id})
+        MATCH (t:MaintenanceTeam {
+            team_id: $team_id
+        })
         RETURN t
         LIMIT 1
         """
@@ -3376,14 +3526,14 @@ def update_maintenance_team(request, team_id):
         team = db.query(
             query,
             {
-                "team_id": team_id
-            }
+                "team_id": team_id,
+            },
         )
 
         if not team:
             return Response(
                 {
-                    "error": "Maintenance team not found."
+                    "error": "Maintenance team not found.",
                 },
                 status=404,
             )
@@ -3405,7 +3555,7 @@ def update_maintenance_team(request, team_id):
         ]):
             return Response(
                 {
-                    "error": "All fields are required."
+                    "error": "All fields are required.",
                 },
                 status=400,
             )
@@ -3418,7 +3568,7 @@ def update_maintenance_team(request, team_id):
         if status_value not in allowed_status:
             return Response(
                 {
-                    "error": "Invalid status."
+                    "error": "Invalid status.",
                 },
                 status=400,
             )
@@ -3426,16 +3576,19 @@ def update_maintenance_team(request, team_id):
         # Ensure email is unique
         duplicate_email_query = """
         MATCH (t:MaintenanceTeam)
-        WHERE toLower(t.email)=toLower($email)
-        AND t.team_id <> $team_id
+        WHERE
+            toLower(t.email) = toLower($email)
+            AND t.team_id <> $team_id
         RETURN t
         LIMIT 1
         """
-        
+
+        # Ensure phone is unique
         duplicate_phone_query = """
         MATCH (t:MaintenanceTeam)
-        WHERE t.phone = $phone
-        AND t.team_id <> $team_id
+        WHERE
+            t.phone = $phone
+            AND t.team_id <> $team_id
         RETURN t
         LIMIT 1
         """
@@ -3445,13 +3598,16 @@ def update_maintenance_team(request, team_id):
             {
                 "phone": phone,
                 "team_id": team_id,
-            }
+            },
         )
 
         if duplicate_phone:
             return Response(
                 {
-                    "error": "Another maintenance team already uses this phone number."
+                    "error": (
+                        "Another maintenance team already uses "
+                        "this phone number."
+                    ),
                 },
                 status=400,
             )
@@ -3461,27 +3617,30 @@ def update_maintenance_team(request, team_id):
             {
                 "email": email,
                 "team_id": team_id,
-            }
+            },
         )
 
         if duplicate:
             return Response(
                 {
-                    "error": "Another maintenance team already uses this email."
+                    "error": (
+                        "Another maintenance team already uses "
+                        "this email."
+                    ),
                 },
                 status=400,
             )
 
         update_query = """
-        MATCH (t:MaintenanceTeam {team_id:$team_id})
-
+        MATCH (t:MaintenanceTeam {
+            team_id: $team_id
+        })
         SET
             t.team_name = $team_name,
             t.specialization = $specialization,
             t.phone = $phone,
             t.email = $email,
             t.status = $status
-
         RETURN
             t.team_id AS team_id,
             t.team_name AS team_name,
@@ -3501,7 +3660,7 @@ def update_maintenance_team(request, team_id):
                 "phone": phone,
                 "email": email,
                 "status": status_value,
-            }
+            },
         )
 
         return Response(
@@ -3513,53 +3672,69 @@ def update_maintenance_team(request, team_id):
 
     finally:
         db.close()
-        
+
+
 @api_view(["DELETE"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsManagerOrAdmin])
 def delete_maintenance_team(request, team_id):
+    try:
+        context = get_authorization_context(request.user)
+        authorize_resource(
+            context,
+            "maintenance_team",
+            team_id,
+        )
+    except (AuthorizationError, ValueError) as exc:
+        return Response(
+            {
+                "error": str(exc),
+            },
+            status=403,
+        )
 
     db = Neo4jConnection()
 
     try:
-
         # Check if team exists
         query = """
-        MATCH (t:MaintenanceTeam {team_id:$team_id})
-
-        RETURN
-            t.team_id AS team_id
+        MATCH (t:MaintenanceTeam {
+            team_id: $team_id
+        })
+        RETURN t.team_id AS team_id
         """
 
         team = db.query(
             query,
             {
-                "team_id": team_id
-            }
+                "team_id": team_id,
+            },
         )
 
         if not team:
             return Response(
                 {
-                    "error": "Maintenance team not found."
+                    "error": "Maintenance team not found.",
                 },
                 status=404,
             )
 
         delete_query = """
-        MATCH (t:MaintenanceTeam {team_id:$team_id})
+        MATCH (t:MaintenanceTeam {
+            team_id: $team_id
+        })
         DETACH DELETE t
         """
 
         db.query(
             delete_query,
             {
-                "team_id": team_id
-            }
+                "team_id": team_id,
+            },
         )
 
         return Response(
             {
-                "message": "Maintenance team deleted successfully."
+                "message": "Maintenance team deleted successfully.",
             }
         )
 
@@ -4744,6 +4919,26 @@ def plan_query(question, understanding, user_context):
     raise ValueError(
         "Unable to determine a valid query scope for this account."
     )
+
+
+def validate_ai_query_scope(cypher, parameters, query_plan):
+    """Validate that a generated query is constrained to its planned scope."""
+    if not isinstance(cypher, str) or not isinstance(parameters, dict):
+        return False
+    if not isinstance(query_plan, dict):
+        return False
+
+    # Administrators are intentionally allowed to query across estates.
+    if query_plan.get("scope") == "all_estates":
+        return True
+
+    estate_id = query_plan.get("estate_id")
+    if not estate_id or parameters.get("estate_id") != estate_id:
+        return False
+
+    normalized_query = re.sub(r"\s+", " ", cypher).lower()
+    # Estate-scoped queries must bind the authenticated estate parameter.
+    return "$estate_id" in normalized_query
     
     
 @api_view(["POST"])
@@ -4846,6 +5041,26 @@ def ai_query_v3(request):
             return Response(
                 {"error": "Unsafe Cypher generated."},
                 status=400,
+            )
+            
+        print(">>> FINAL SCOPE VALIDATION INPUT <<<")
+        print("CYTHER:", cypher)
+        print("PARAMETERS:", parameters)
+        print("QUERY PLAN:", query_plan)
+
+        if not validate_ai_query_scope(
+            cypher,
+            parameters,
+            query_plan,
+        ):
+            return Response(
+                {
+                    "error": (
+                        "Generated query does not respect "
+                        "the authenticated estate scope."
+                    )
+                },
+                status=403,
             )
 
         data = execute_cypher(cypher, parameters)

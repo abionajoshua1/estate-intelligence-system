@@ -55,3 +55,62 @@ def is_safe_cypher(query: str) -> bool:
             return False
 
     return True
+
+def validate_ai_query_scope(
+    query: str,
+    parameters: dict,
+    query_plan: dict,
+) -> bool:
+    """
+    Validate that an AI-generated Cypher query respects
+    the authenticated user's query scope.
+
+    Admin/global queries may access all estates.
+
+    Manager/resident current-estate queries must:
+    - use the trusted estate_id
+    - reference the trusted $estate_id parameter
+    - not rely on a user-supplied estate name for authorization
+    """
+
+    query_plan = query_plan or {}
+    parameters = parameters or {}
+
+    query_scope = query_plan.get("scope")
+    estate_id = query_plan.get("estate_id")
+
+    # ----------------------------------------------------------
+    # GLOBAL / ADMIN
+    # ----------------------------------------------------------
+
+    if query_scope in {"global", "all_estates"}:
+        return True
+
+    # ----------------------------------------------------------
+    # CURRENT ESTATE
+    # ----------------------------------------------------------
+
+    if query_scope == "current_estate":
+        if not estate_id:
+            return False
+
+        # The trusted estate_id must be supplied as a parameter.
+        if parameters.get("estate_id") != estate_id:
+            return False
+
+        # Current-estate queries must reference the trusted
+        # estate parameter.
+        if not re.search(
+            r"\$estate_id\b",
+            query,
+            re.IGNORECASE,
+        ):
+            return False
+
+        return True
+
+    # ----------------------------------------------------------
+    # UNKNOWN SCOPE
+    # ----------------------------------------------------------
+
+    return False
