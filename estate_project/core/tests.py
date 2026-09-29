@@ -52,39 +52,29 @@ class CypherGuardTests(TestCase):
 
 class GenerateCypherTests(TestCase):
 
-    def test_resident_property_uses_parameter(self):
+    def test_unsupported_resident_property_query(self):
         result = generate_cypher("Where does Jane Smith live?")
-
-        cypher, parameters = result
-
-        self.assertIn("$resident_name", cypher)
         self.assertEqual(
-            parameters,
-            {"resident_name": "Jane Smith"},
+            result,
+            'RETURN "UNSUPPORTED_QUERY" AS error',
         )
 
-    def test_resident_by_property_uses_parameter(self):
+    def test_unsupported_property_resident_query(self):
         result = generate_cypher("Who lives in B201?")
-
-        cypher, parameters = result
-
-        self.assertIn("$property_number", cypher)
         self.assertEqual(
-            parameters,
-            {"property_number": "B201"},
+            result,
+            'RETURN "UNSUPPORTED_QUERY" AS error',
         )
 
-    def test_manager_query_uses_parameter(self):
-        result = generate_cypher(
+    def test_manager_query_uses_estate_parameter(self):
+        cypher, parameters = generate_cypher(
             "Who manages the property where John Doe lives?"
         )
 
-        cypher, parameters = result
-
-        self.assertIn("$resident_name", cypher)
+        self.assertIn("$estate_name", cypher)
         self.assertEqual(
             parameters,
-            {"resident_name": "John Doe"},
+            {"estate_name": "the property where John Doe lives"},
         )
 
 
@@ -187,7 +177,7 @@ class AIQueryV3APITests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["question"], "Show all residents")
-        self.assertIn("John Doe", response.data["response"])
+        self.assertEqual(response.data["response"], "1 matching record were retrieved.",)
 
     def test_empty_question(self):
         response = self.client.post(

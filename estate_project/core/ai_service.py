@@ -536,7 +536,7 @@ def generate_cypher(question: str, context=None, semantic_understanding=None,):
 
     q = question.lower().strip()
     
-        # ==========================================================
+     # ==========================================================
     # ESTATE MANAGER
     #
     # Examples:
@@ -552,31 +552,59 @@ def generate_cypher(question: str, context=None, semantic_understanding=None,):
         # ------------------------------------------------------
         # Specific estate
         # ------------------------------------------------------
-        if estate_name:
+        if query_scope == "current_estate":
+            if not plan_estate_id:
+                return 'RETURN "ESTATE_CONTEXT_REQUIRED" AS error'
 
             print(">>> ESTATE MANAGER QUERY USED <<<")
-            print(">>> ESTATE:", estate_name)
+            print(">>> ESTATE ID:", plan_estate_id)
 
             return (
                 """
                 MATCH (e:Estate)-[:HAS_MANAGER]->(m:Manager)
-
-                WHERE toLower(trim(e.name)) =
-                      toLower(trim($estate_name))
-
+                WHERE e.estate_id = $estate_id
                 RETURN
                     e.estate_id AS estate_id,
                     e.name AS estate_name,
                     m.manager_id AS manager_id,
                     m.name AS manager_name
-
                 ORDER BY m.name
                 """.strip(),
                 {
-                    "estate_name": estate_name
+                    "estate_id": plan_estate_id
                 },
             )
 
+        if query_scope in ("global", "all_estates"):
+            if estate_name:
+                return (
+                    """
+                    MATCH (e:Estate)-[:HAS_MANAGER]->(m:Manager)
+                    WHERE toLower(trim(e.name)) =
+                        toLower(trim($estate_name))
+                    RETURN
+                        e.estate_id AS estate_id,
+                        e.name AS estate_name,
+                        m.manager_id AS manager_id,
+                        m.name AS manager_name
+                    ORDER BY m.name
+                    """.strip(),
+                    {
+                        "estate_name": estate_name
+                    },
+                )
+
+            return """
+            MATCH (e:Estate)-[:HAS_MANAGER]->(m:Manager)
+            RETURN
+                e.estate_id AS estate_id,
+                e.name AS estate_name,
+                m.manager_id AS manager_id,
+                m.name AS manager_name
+            ORDER BY e.name, m.name
+            """.strip()
+
+        return 'RETURN "UNSUPPORTED_QUERY" AS error'
         # ------------------------------------------------------
         # All estates with managers
         # ------------------------------------------------------
@@ -603,51 +631,87 @@ def generate_cypher(question: str, context=None, semantic_understanding=None,):
     #
     # Examples:
     # Where does John Doe live?
-    # Where does Tunde live?
+    # What property does John Doe live in?
     # ==========================================================
 
-    resident_property_match = re.search(
-        r"where does (.+?) live\??$",
-        question,
-        re.IGNORECASE
-    )
+    if intent == "resident_property":
 
-    if resident_property_match:
+        resident_name = filters.get("resident_name")
 
-        resident_name = (
-            resident_property_match.group(1)
-            .strip()
-            .rstrip("?.!")
-            .strip()
-        )
+        if not resident_name:
+            return 'RETURN "RESIDENT_NAME_REQUIRED" AS error'
 
         print(">>> RESIDENT PROPERTY QUERY USED <<<")
+        print(">>> QUERY SCOPE:", query_scope)
+        print(">>> ESTATE ID:", plan_estate_id)
         print(">>> RESIDENT:", resident_name)
 
-        return (
-            """
-            MATCH (r:Resident)-[:LIVES_IN]->(p:Property)
-                  <-[:HAS_PROPERTY]-(e:Estate)
+        # ------------------------------------------------------
+        # CURRENT ESTATE
+        # ------------------------------------------------------
 
-            WHERE toLower(trim(r.name)) =
-                  toLower(trim($resident_name))
+        if query_scope == "current_estate":
 
-            RETURN
-                r.resident_id AS resident_id,
-                r.name AS name,
-                p.property_id AS property_id,
-                p.property_number AS property_number,
-                p.property_type AS property_type,
-                e.estate_id AS estate_id,
-                e.name AS estate_name
+            if not plan_estate_id:
+                return 'RETURN "ESTATE_CONTEXT_REQUIRED" AS error'
 
-            ORDER BY r.name
-            """.strip(),
+            return (
+                """
+                MATCH (e:Estate)-[:HAS_PROPERTY]->(p:Property)
+                    <-[:LIVES_IN]-(r:Resident)
 
-            {
-                "resident_name": resident_name
-            },
-        )
+                WHERE e.estate_id = $estate_id
+                AND toLower(trim(r.name)) =
+                    toLower(trim($resident_name))
+
+                RETURN
+                    r.resident_id AS resident_id,
+                    r.name AS name,
+                    p.property_id AS property_id,
+                    p.property_number AS property_number,
+                    p.property_type AS property_type,
+                    e.estate_id AS estate_id,
+                    e.name AS estate_name
+
+                ORDER BY r.name
+                """.strip(),
+                {
+                    "estate_id": plan_estate_id,
+                    "resident_name": resident_name,
+                },
+            )
+
+        # ------------------------------------------------------
+        # GLOBAL / ADMIN
+        # ------------------------------------------------------
+
+        if query_scope in ("global", "all_estates"):
+
+            return (
+                """
+                MATCH (e:Estate)-[:HAS_PROPERTY]->(p:Property)
+                    <-[:LIVES_IN]-(r:Resident)
+
+                WHERE toLower(trim(r.name)) =
+                    toLower(trim($resident_name))
+
+                RETURN
+                    r.resident_id AS resident_id,
+                    r.name AS name,
+                    p.property_id AS property_id,
+                    p.property_number AS property_number,
+                    p.property_type AS property_type,
+                    e.estate_id AS estate_id,
+                    e.name AS estate_name
+
+                ORDER BY r.name
+                """.strip(),
+                {
+                    "resident_name": resident_name,
+                },
+            )
+
+        return 'RETURN "UNSUPPORTED_QUERY" AS error'
 
 
     # ==========================================================
@@ -660,73 +724,96 @@ def generate_cypher(question: str, context=None, semantic_understanding=None,):
     # Who lives in B201?
     # ==========================================================
 
-    property_match = re.search(
-        r"who lives in (?:property\s+)?(.+?)\??$",
-        question,
-        re.IGNORECASE
-    )
-
-    if property_match:
+    if intent == "residents_by_property":
 
         property_identifier = (
-            property_match.group(1)
-            .strip()
-            .rstrip("?.!")
-            .strip()
+            filters.get("property_id")
+            or filters.get("property_number")
         )
 
+        if not property_identifier:
+            return 'RETURN "PROPERTY_IDENTIFIER_REQUIRED" AS error'
+
+        print(">>> RESIDENTS BY PROPERTY QUERY USED <<<")
+        print(">>> QUERY SCOPE:", query_scope)
+        print(">>> ESTATE ID:", plan_estate_id)
+        print(">>> PROPERTY:", property_identifier)
+
         # ------------------------------------------------------
-        # Only treat actual property identifiers as properties.
-        #
-        # Examples:
-        # P001
-        # P002
-        # A101
-        # A102
-        # B201
-        # C301
-        # TEST-001
+        # CURRENT ESTATE
         # ------------------------------------------------------
 
-        if re.fullmatch(
-            r"(?:P\d+|[A-Z]\d{3}|TEST-\d+)",
-            property_identifier,
-            re.IGNORECASE
-        ):
+        if query_scope == "current_estate":
 
-            print(">>> RESIDENT BY PROPERTY QUERY USED <<<")
-            print(
-                ">>> PROPERTY IDENTIFIER:",
-                property_identifier
-            )
+            if not plan_estate_id:
+                return 'RETURN "ESTATE_CONTEXT_REQUIRED" AS error'
 
             return (
                 """
-                MATCH (r:Resident)-[:LIVES_IN]->(p:Property)
+                MATCH (e:Estate)-[:HAS_PROPERTY]->(p:Property)
+                    <-[:LIVES_IN]-(r:Resident)
 
-                WHERE
+                WHERE e.estate_id = $estate_id
+                AND (
                     toLower(trim(p.property_id)) =
-                    toLower(trim($property_number))
-
+                    toLower(trim($property_identifier))
                     OR
-
                     toLower(trim(p.property_number)) =
-                    toLower(trim($property_number))
+                    toLower(trim($property_identifier))
+                )
 
                 RETURN
                     r.resident_id AS resident_id,
                     r.name AS name,
                     p.property_id AS property_id,
                     p.property_number AS property_number,
-                    p.property_type AS property_type
+                    p.property_type AS property_type,
+                    e.estate_id AS estate_id,
+                    e.name AS estate_name
 
                 ORDER BY r.name
                 """.strip(),
-
                 {
-                    "property_number": property_identifier
+                    "estate_id": plan_estate_id,
+                    "property_identifier": property_identifier,
                 },
             )
+
+        # ------------------------------------------------------
+        # GLOBAL / ADMIN
+        # ------------------------------------------------------
+
+        if query_scope in ("global", "all_estates"):
+
+            return (
+                """
+                MATCH (e:Estate)-[:HAS_PROPERTY]->(p:Property)
+                    <-[:LIVES_IN]-(r:Resident)
+
+                WHERE
+                    toLower(trim(p.property_id)) =
+                    toLower(trim($property_identifier))
+                    OR
+                    toLower(trim(p.property_number)) =
+                    toLower(trim($property_identifier))
+
+                RETURN
+                    r.resident_id AS resident_id,
+                    r.name AS name,
+                    p.property_id AS property_id,
+                    p.property_number AS property_number,
+                    p.property_type AS property_type,
+                    e.estate_id AS estate_id,
+                    e.name AS estate_name
+
+                ORDER BY r.name
+                """.strip(),
+                {
+                    "property_identifier": property_identifier,
+                },
+            )
+
+        return 'RETURN "UNSUPPORTED_QUERY" AS error'
 
 
     # ==========================================================
@@ -1753,44 +1840,85 @@ def generate_cypher(question: str, context=None, semantic_understanding=None,):
     # ==========================================================
     # PROPERTY MANAGER
     #
-    # Example:
+    # Examples:
     # Who manages the property where John Doe lives?
+    # Who manages John Doe's property?
     # ==========================================================
 
-    manager_match = re.search(
-        r"property where (.+?) lives\??$",
-        question,
-        re.IGNORECASE
-    )
+    if intent == "property_manager":
 
-    if manager_match and "who manages" in q:
+        resident_name = filters.get("resident_name")
 
-        resident_name = (
-            manager_match.group(1)
-            .strip()
-            .rstrip("?.!")
-            .strip()
-        )
+        if not resident_name:
+            return 'RETURN "RESIDENT_NAME_REQUIRED" AS error'
 
         print(">>> PROPERTY MANAGER QUERY USED <<<")
+        print(">>> QUERY SCOPE:", query_scope)
+        print(">>> ESTATE ID:", plan_estate_id)
         print(">>> RESIDENT:", resident_name)
 
-        return (
-            """
-            MATCH (r:Resident {name: $resident_name})
-                -[:LIVES_IN]->(p:Property)
-                <-[:HAS_PROPERTY]-(e:Estate)
-                -[:HAS_MANAGER]->(m:Manager)
+        if query_scope == "current_estate":
 
-            RETURN
-                m.manager_id AS manager_id,
-                m.name AS manager_name
-            """.strip(),
+            if not plan_estate_id:
+                return 'RETURN "ESTATE_CONTEXT_REQUIRED" AS error'
 
-            {
-                "resident_name": resident_name
-            },
-        )
+            return (
+                """
+                MATCH (e:Estate)-[:HAS_PROPERTY]->(p:Property)
+                    <-[:LIVES_IN]-(r:Resident)
+                MATCH (e)-[:HAS_MANAGER]->(m:Manager)
+
+                WHERE e.estate_id = $estate_id
+                AND toLower(trim(r.name)) =
+                    toLower(trim($resident_name))
+
+                RETURN
+                    r.resident_id AS resident_id,
+                    r.name AS resident_name,
+                    p.property_id AS property_id,
+                    p.property_number AS property_number,
+                    m.manager_id AS manager_id,
+                    m.name AS manager_name,
+                    e.estate_id AS estate_id,
+                    e.name AS estate_name
+
+                ORDER BY m.name
+                """.strip(),
+                {
+                    "estate_id": plan_estate_id,
+                    "resident_name": resident_name,
+                },
+            )
+
+        if query_scope in ("global", "all_estates"):
+
+            return (
+                """
+                MATCH (e:Estate)-[:HAS_PROPERTY]->(p:Property)
+                    <-[:LIVES_IN]-(r:Resident)
+                MATCH (e)-[:HAS_MANAGER]->(m:Manager)
+
+                WHERE toLower(trim(r.name)) =
+                    toLower(trim($resident_name))
+
+                RETURN
+                    r.resident_id AS resident_id,
+                    r.name AS resident_name,
+                    p.property_id AS property_id,
+                    p.property_number AS property_number,
+                    m.manager_id AS manager_id,
+                    m.name AS manager_name,
+                    e.estate_id AS estate_id,
+                    e.name AS estate_name
+
+                ORDER BY e.name, m.name
+                """.strip(),
+                {
+                    "resident_name": resident_name,
+                },
+            )
+
+        return 'RETURN "UNSUPPORTED_QUERY" AS error'
         
     # ==========================================================
     # ESTATE MANAGER
@@ -2186,8 +2314,6 @@ Be concise and accurate.
         print(">>> LLM ERROR:", exc)
         return ""
 
-
-from core import views
 
 def analyze_results(question: str, data, intent=None, operation=None, entity=None):   
         

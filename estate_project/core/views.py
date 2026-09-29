@@ -584,7 +584,7 @@ def update_resident(request, resident_id):
 
     return Response(
         {
-            "message": "Resident updated sucessfully.",
+            "message": "Resident updated successfully.",
             "resident": updated_resident[0]
         },
         status=200,
