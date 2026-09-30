@@ -1937,6 +1937,14 @@ def global_search(request):
             {"error": str(exc)},
             status=403,
         )
+        
+    role = context.get("role")
+
+    resident_id = getattr(
+        getattr(request.user, "profile", None),
+        "resident_id",
+        None,
+    )
 
     db = Neo4jConnection()
 
@@ -2085,7 +2093,14 @@ def global_search(request):
         WHERE
             (
                 $scope = "global"
-                OR e.estate_id = $estate_id
+                OR (
+                $role = "manager"
+                AND e.estate_id = $estate_id
+                )
+                OR (
+                $role = "resident"
+                AND r.resident_id = $resident_id
+                )
             )
             AND (
                 toLower(coalesce(t.team_name, "")) CONTAINS toLower($q)
@@ -2122,6 +2137,8 @@ def global_search(request):
                 "q": query_text,
                 "estate_id": context.get("estate_id"),
                 "scope": context.get("scope"),
+                "role": role,
+                "resident_id": resident_id,
             },
         )
         
