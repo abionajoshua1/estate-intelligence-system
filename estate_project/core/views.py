@@ -22,7 +22,7 @@ from dashboard.notification_service import create_notification
 
 
 import json
-from django.http import JsonResponse
+from django.http import JsonResponse, request
 from django.views.decorators.csrf import csrf_exempt
 
 from django.conf import settings
@@ -249,26 +249,62 @@ User Question:
 # =========================
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsManagerOrAdmin])
 def get_residents(request):
 
-    query = """
-    MATCH (r:Resident)
-    RETURN
-        r.resident_id AS resident_id,
-        r.name AS name,
-        r.phone AS phone,
-        r.email AS email,
-        r.gender AS gender,
-        r.status AS status,
-        toString(r.registered_at) AS registered_at
-    ORDER BY r.name
-    """
+    try:
+        context = get_authorization_context(request.user)
+    except (AuthorizationError, ValueError) as exc:
+        return Response(
+            {"error": str(exc)},
+            status=403,
+        )
+
+    if is_global_access(context):
+        query = """
+        MATCH (e:Estate)-[:HAS_PROPERTY]->(p:Property)
+              <-[:LIVES_IN]-(r:Resident)
+
+        RETURN
+            r.resident_id AS resident_id,
+            r.name AS name,
+            r.phone AS phone,
+            r.email AS email,
+            r.gender AS gender,
+            r.status AS status,
+            toString(r.registered_at) AS registered_at
+
+        ORDER BY r.name
+        """
+
+        parameters = {}
+
+    else:
+        query = """
+        MATCH (e:Estate {estate_id: $estate_id})
+              -[:HAS_PROPERTY]->(p:Property)
+              <-[:LIVES_IN]-(r:Resident)
+
+        RETURN
+            r.resident_id AS resident_id,
+            r.name AS name,
+            r.phone AS phone,
+            r.email AS email,
+            r.gender AS gender,
+            r.status AS status,
+            toString(r.registered_at) AS registered_at
+
+        ORDER BY r.name
+        """
+
+        parameters = {
+            "estate_id": context["estate_id"]
+        }
 
     db = Neo4jConnection()
 
     try:
-        residents = db.query(query)
+        residents = db.query(query, parameters)
     finally:
         db.close()
 
@@ -1468,9 +1504,9 @@ def create_complaint(request):
             status=400,
         )
 
-    # ----------------------------------------------------------
-    # Authorization
-    # ----------------------------------------------------------
+# ----------------------------------------------------------
+# Authorization
+# ----------------------------------------------------------
 
     try:
         context = get_authorization_context(request.user)
@@ -1487,6 +1523,29 @@ def create_complaint(request):
             property_id,
         )
 
+        # Residents can only complain about
+        # the property they live in.
+        if role == "resident":
+            resident_property_query = """
+            MATCH (r:Resident {resident_id: $resident_id})
+                -[:LIVES_IN]->(p:Property {property_id: $property_id})
+            RETURN r
+            LIMIT 1
+            """
+
+            resident_property = execute_cypher(
+                resident_property_query,
+                {
+                    "resident_id": resident_id,
+                    "property_id": property_id,
+                },
+            )
+
+            if not resident_property:
+                raise AuthorizationError(
+                    "You are not authorized to create a complaint for this property."
+                )
+
     except (AuthorizationError, ValueError) as exc:
         return Response(
             {"error": str(exc)},
@@ -1494,7 +1553,7 @@ def create_complaint(request):
         )
 
     db = Neo4jConnection()
-
+    
     try:
 
         # ----------------------------------------------------------
