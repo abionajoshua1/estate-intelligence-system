@@ -10,23 +10,37 @@ from rest_framework.response import Response
 
 from .neo4j_connection import Neo4jConnection
 
+from .authorization import get_authorization_context
+
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def dashboard_overview(request):
+    
+    context = get_authorization_context(request.user)
 
     db = Neo4jConnection()
 
     try:
 
         resident_query = """
-        MATCH (r:Resident)
-        RETURN count(r) AS total_residents
+        MATCH (e:Estate)-[:HAS_PROPERTY]->(p:Property)
+            <-[:LIVES_IN]-(r:Resident)
+        WHERE
+            $scope = "global"
+            OR e.estate_id = $estate_id
+        RETURN count(DISTINCT r) AS total_residents
         """
 
-        resident_count = db.query(resident_query)
+        resident_count = db.query(
+            resident_query,
+            {
+                "scope": context.get("scope"),
+                "estate_id": context.get("estate_id"),
+            },
+        )
+        
         total_residents = resident_count[0]["total_residents"]
-
 
         property_query = """
         MATCH (p:Property)
