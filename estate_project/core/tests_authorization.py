@@ -58,3 +58,38 @@ class ComplaintAuthorizationTests(APITestCase):
             "not authorized",
             response.data["error"].lower(),
         )
+        
+    @patch("core.views.Neo4jConnection")
+    @patch("core.views.get_authorization_context")
+    def test_resident_cannot_search_other_estate_resident(
+        self,
+        mock_context,
+        mock_db_class,
+    ):
+        mock_context.return_value = {
+            "role": "resident",
+            "estate_id": "E002",
+            "estate_name": "Voera Estate",
+            "scope": "current_estate",
+        }
+
+        mock_db = mock_db_class.return_value
+        mock_db.query.return_value = []
+
+        user = get_user_model().objects.get(username="abiona.lydia")
+        self.client.force_authenticate(user=user)
+
+        response = self.client.get(
+            "/api/search/",
+            {"q": "R001"},
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            response.data,
+            [],
+        )
