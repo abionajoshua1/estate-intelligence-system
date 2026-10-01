@@ -1959,7 +1959,7 @@ def global_search(request):
             (
                 $scope = "global"
                 OR (
-                $rrole = "manager"
+                $role = "manager"
                 AND e.estate_id = $estate_id
                 )
                 OR (
@@ -1993,7 +1993,14 @@ def global_search(request):
         WHERE
             (
                 $scope = "global"
-                OR e.estate_id = $estate_id
+                OR (
+                    $role = "manager"
+                    AND e.estate_id = $estate_id
+                )
+                OR (
+                    $role = "resident"
+                    AND r.resident_id = $resident_id
+                )
             )
             AND (
                 toLower(coalesce(p.property_number, "")) CONTAINS toLower($q)
@@ -2021,7 +2028,14 @@ def global_search(request):
         WHERE
             (
                 $scope = "global"
-                OR e.estate_id = $estate_id
+                OR (
+                    $role = "manager"
+                    AND e.estate_id = $estate_id
+                )
+                OR (
+                    $role = "resident"
+                    AND r.resident_id = $resident_id
+                )
             )
             AND (
                 toLower(coalesce(c.title, "")) CONTAINS toLower($q)
@@ -2151,6 +2165,19 @@ def global_search(request):
 @api_view(["PUT"])
 @permission_classes([IsManagerOrAdmin])
 def update_complaint(request, complaint_id):
+
+    try:
+        context = get_authorization_context(request.user)
+        authorize_resource(
+            context,
+            "complaint",
+            complaint_id,
+        )
+    except AuthorizationError as exc:
+        return Response(
+            {"error": str(exc)},
+            status=403,
+        )
 
     db = Neo4jConnection()
 
@@ -2318,6 +2345,19 @@ def update_complaint(request, complaint_id):
 @api_view(["DELETE"])
 @permission_classes([IsManagerOrAdmin])
 def delete_complaint(request, complaint_id):
+
+    try:
+        context = get_authorization_context(request.user)
+        authorize_resource(
+            context,
+            "complaint",
+            complaint_id,
+        )
+    except AuthorizationError as exc:
+        return Response(
+            {"error": str(exc)},
+            status=403,
+        )
 
     db = Neo4jConnection()
 
