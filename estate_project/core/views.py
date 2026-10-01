@@ -1958,7 +1958,14 @@ def global_search(request):
         WHERE
             (
                 $scope = "global"
-                OR e.estate_id = $estate_id
+                OR (
+                $rrole = "manager"
+                AND e.estate_id = $estate_id
+                )
+                OR (
+                    $role = "resident"
+                    AND r.resident_id = $resident_id
+                )
             )
             AND (
                 toLower(coalesce(r.name, "")) CONTAINS toLower($q)
@@ -2093,14 +2100,7 @@ def global_search(request):
         WHERE
             (
                 $scope = "global"
-                OR (
-                $role = "manager"
-                AND e.estate_id = $estate_id
-                )
-                OR (
-                $role = "resident"
-                AND r.resident_id = $resident_id
-                )
+                OR e.estate_id = $estate_id
             )
             AND (
                 toLower(coalesce(t.team_name, "")) CONTAINS toLower($q)

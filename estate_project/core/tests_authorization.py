@@ -72,12 +72,14 @@ class ComplaintAuthorizationTests(APITestCase):
             "estate_name": "Voera Estate",
             "scope": "current_estate",
         }
-
+        
+        self.user.profile.resident_id = "R006"
+        self.user.profile.save()
+        
         mock_db = mock_db_class.return_value
         mock_db.query.return_value = []
 
-        user = get_user_model().objects.get(username="abiona.lydia")
-        self.client.force_authenticate(user=user)
+        self.client.force_authenticate(user=self.user)
 
         response = self.client.get(
             "/api/search/",
@@ -93,3 +95,24 @@ class ComplaintAuthorizationTests(APITestCase):
             response.data,
             [],
         )
+        
+        print("ALL QUERY CALLS:", mock_db.query.call_args_list)
+
+        call_args = mock_db.query.call_args
+        parameters = call_args.args[1]
+        
+        '''
+            self.assertEqual(
+            parameters["role"],
+            "resident",
+        )
+
+        self.assertEqual(
+            parameters["estate_id"],
+            "E002",
+        )
+
+        self.assertEqual(
+            parameters["resident_id"],
+            "R006",
+        )'''
