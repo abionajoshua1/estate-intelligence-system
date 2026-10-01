@@ -402,3 +402,47 @@ class ComplaintAuthorizationTests(APITestCase):
         self.assertIn("not authorized", response.data["error"].lower())
 
         mock_db_class.assert_not_called()
+        
+    @patch("core.views.Neo4jConnection")
+    @patch("core.views.get_authorization_context")
+    @patch("core.views.authorize_resource")
+    def test_manager_cannot_assign_team_from_other_estate_to_complaint(
+        self,
+        mock_authorize_resource,
+        mock_context,
+        mock_db_class,
+    ):
+        mock_context.return_value = {
+            "role": "manager",
+            "estate_id": "E001",
+            "estate_name": "Greenfield Estate",
+            "scope": "current_estate",
+        }
+
+        def authorize_side_effect(context, resource_type, resource_id):
+            if resource_type == "maintenance_team" and resource_id == "T002":
+                raise AuthorizationError(
+                    "You are not authorized to access this maintenance team."
+                )
+
+        mock_authorize_resource.side_effect = authorize_side_effect
+
+        self.user.profile.role = "manager"
+        self.user.profile.resident_id = None
+        self.user.profile.save()
+
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.post(
+            "/api/complaints/assign-team/",
+            {
+                "complaint_id": "C001",
+                "team_id": "T002",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("not authorized", response.data["error"].lower())
+
+        mock_db_class.assert_not_called()
