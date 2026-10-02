@@ -23,6 +23,7 @@ import {
   useComplaints,
   useCreateComplaint,
   useUpdateComplaint,
+  useDeleteComplaint,
   useAssignComplaintTeam,
   useAssignComplaintProperty,
 } from "@/hooks/useComplaints";
@@ -623,6 +624,9 @@ export default function Complaints() {
   const updateComplaintMutation =
   useUpdateComplaint();
 
+  const deleteComplaintMutation =
+  useDeleteComplaint();
+
   const assignPropertyMutation =
   useAssignComplaintProperty();
 
@@ -667,7 +671,7 @@ export default function Complaints() {
   ] = useState(null);
 
   const complaints =
-    complaintsQuery.data;
+  complaintsQuery.data?.results ?? [];
 
   const firstRow =
     Array.isArray(complaints) &&
@@ -1160,13 +1164,21 @@ export default function Complaints() {
     }
   }
 
-  function handleConfirmDelete(complaint) {
-    console.warn(
-      "useDeleteComplaint() not implemented yet — target:",
-      complaint
-    );
+  async function handleConfirmDelete(complaint) {
+    if (!complaint) return;
 
-    setDeleteComplaint(null);
+    try {
+      await deleteComplaintMutation.mutateAsync(
+        complaint[idField]
+      );
+
+      setDeleteComplaint(null);
+    } catch (error) {
+      console.error(
+        "Failed to delete complaint:",
+        error?.response?.data || error
+      );
+    }
   }
 
   async function handleConfirmAssignProperty(

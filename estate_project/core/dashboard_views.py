@@ -43,88 +43,166 @@ def dashboard_overview(request):
         total_residents = resident_count[0]["total_residents"]
 
         property_query = """
-        MATCH (p:Property)
-        RETURN count(p) AS total_properties
+        MATCH (e:Estate)-[:HAS_PROPERTY]->(p:Property)
+        WHERE
+            $scope = "global"
+            OR e.estate_id = $estate_id
+        RETURN count(DISTINCT p) AS total_properties
         """
 
-        property_count = db.query(property_query)
+        property_count = db.query(
+            property_query,
+            {
+                "scope": context.get("scope"),
+                "estate_id": context.get("estate_id"),
+            },
+        )
+        
         total_properties = property_count[0]["total_properties"]
         
         estate_query = """
         MATCH (e:Estate)
-        RETURN count(e) AS total_estates
+        WHERE
+            $scope = "global"
+            OR e.estate_id = $estate_id
+        RETURN count(DISTINCT e) AS total_estates
         """
 
-        estate_count = db.query(estate_query)
+        estate_count = db.query(
+            estate_query, 
+            {
+            "scope": context.get("scope"),
+            "estate_id": context.get("estate_id"),
+            },
+        )
+        
         total_estates = estate_count[0]["total_estates"]
 
 
         available_query = """
-        MATCH (p:Property)
-        WHERE p.status = "Available"
-        RETURN count(p) AS available_properties
+        MATCH (e:Estate)-[:HAS_PROPERTY]->(p:Property)
+        WHERE
+            p.status = "Available"
+            AND (
+                $scope = "global"
+                OR e.estate_id = $estate_id
+            )
+        RETURN count(DISTINCT p) AS available_properties
         """
 
-        available_count = db.query(available_query)
+        available_count = db.query(available_query, {
+            "scope": context.get("scope"),
+            "estate_id": context.get("estate_id"),
+        })
         available_properties = available_count[0]["available_properties"]
 
 
         occupied_query = """
-        MATCH (p:Property)
-        WHERE p.status = "Occupied"
-        RETURN count(p) AS occupied_properties
+        MATCH (e:Estate)-[:HAS_PROPERTY]->(p:Property)
+        WHERE
+            p.status = "Occupied"
+            AND (
+                $scope = "global"
+                OR e.estate_id = $estate_id
+            )
+        RETURN count(DISTINCT p) AS occupied_properties
         """
 
-        occupied_count = db.query(occupied_query)
+        occupied_count = db.query(occupied_query, {
+            "scope": context.get("scope"),
+            "estate_id": context.get("estate_id"),
+        })
         occupied_properties = occupied_count[0]["occupied_properties"]
 
 
         maintenance_query = """
-        MATCH (p:Property)
-        WHERE p.status = "Maintenance"
-        RETURN count(p) AS maintenance_properties
+        MATCH (e:Estate)-[:HAS_PROPERTY]->(p:Property)
+        WHERE
+            p.status = "Maintenance"
+            AND (
+                $scope = "global"
+                OR e.estate_id = $estate_id
+            )
+        RETURN count(DISTINCT p) AS maintenance_properties
         """
 
-        maintenance_count = db.query(maintenance_query)
+        maintenance_count = db.query(maintenance_query, {
+            "scope": context.get("scope"),
+            "estate_id": context.get("estate_id"),
+        })
         maintenance_properties = maintenance_count[0]["maintenance_properties"]
 
 
         complaint_query = """
-        MATCH (c:Complaint)
-        RETURN count(c) AS total_complaints
+        MATCH (c:Complaint)-[:ABOUT]->(p:Property)
+            <-[:HAS_PROPERTY]-(e:Estate)
+        WHERE
+            $scope = "global"
+            OR e.estate_id = $estate_id
+        RETURN count(DISTINCT c) AS total_complaints
         """
 
-        complaint_count = db.query(complaint_query)
+        complaint_count = db.query(complaint_query, {
+            "scope": context.get("scope"),
+            "estate_id": context.get("estate_id"),
+        })
         total_complaints = complaint_count[0]["total_complaints"]
 
 
         open_query = """
-        MATCH (c:Complaint)
-        WHERE c.status = "Open"
-        RETURN count(c) AS open_complaints
+        MATCH (c:Complaint)-[:ABOUT]->(p:Property)
+            <-[:HAS_PROPERTY]-(e:Estate)
+        WHERE
+            c.status = "Open"
+            AND (
+                $scope = "global"
+                OR e.estate_id = $estate_id
+            )
+        RETURN count(DISTINCT c) AS open_complaints
         """
 
-        open_count = db.query(open_query)
+        open_count = db.query(open_query, {
+            "scope": context.get("scope"),
+            "estate_id": context.get("estate_id"),
+        })
         open_complaints = open_count[0]["open_complaints"]
 
 
         in_progress_query = """
-        MATCH (c:Complaint)
-        WHERE c.status = "In Progress"
-        RETURN count(c) AS in_progress_complaints
+        MATCH (c:Complaint)-[:ABOUT]->(p:Property)
+            <-[:HAS_PROPERTY]-(e:Estate)
+        WHERE
+            c.status = "In Progress"
+            AND (
+                $scope = "global"
+                OR e.estate_id = $estate_id
+            )
+        RETURN count(DISTINCT c) AS in_progress_complaints
         """
 
-        in_progress_count = db.query(in_progress_query)
+        in_progress_count = db.query(in_progress_query, {
+            "scope": context.get("scope"),
+            "estate_id": context.get("estate_id"),
+        })
         in_progress_complaints = in_progress_count[0]["in_progress_complaints"]
 
 
         resolved_query = """
-        MATCH (c:Complaint)
-        WHERE c.status = "Resolved"
-        RETURN count(c) AS resolved_complaints
+        MATCH (c:Complaint)-[:ABOUT]->(p:Property)
+            <-[:HAS_PROPERTY]-(e:Estate)
+        WHERE
+            c.status = "Resolved"
+            AND (
+                $scope = "global"
+                OR e.estate_id = $estate_id
+            )
+        RETURN count(DISTINCT c) AS resolved_complaints
         """
 
-        resolved_count = db.query(resolved_query)
+        resolved_count = db.query(resolved_query, {
+            "scope": context.get("scope"),
+            "estate_id": context.get("estate_id"),
+        })
         resolved_complaints = resolved_count[0]["resolved_complaints"]
 
 
@@ -149,47 +227,61 @@ def dashboard_overview(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def complaints_by_category(request):
-
+    context = get_authorization_context(request.user)
     db = Neo4jConnection()
 
     try:
-
         query = """
-        MATCH (c:Complaint)
-
+        MATCH (c:Complaint)-[:ABOUT]->(p:Property)
+            <-[:HAS_PROPERTY]-(e:Estate)
+        WHERE
+            $scope = "global"
+            OR e.estate_id = $estate_id
         RETURN
             c.category AS category,
-            count(c) AS total
-
+            count(DISTINCT c) AS total
         ORDER BY total DESC
         """
 
-        result = db.query(query)
+        result = db.query(
+            query,
+            {
+                "scope": context.get("scope"),
+                "estate_id": context.get("estate_id"),
+            },
+        )
 
         return Response(result)
 
     finally:
         db.close()
         
+        
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def properties_by_status(request):
-
+    context = get_authorization_context(request.user)
     db = Neo4jConnection()
 
     try:
-
         query = """
-        MATCH (p:Property)
-
+        MATCH (e:Estate)-[:HAS_PROPERTY]->(p:Property)
+        WHERE
+            $scope = "global"
+            OR e.estate_id = $estate_id
         RETURN
             p.status AS status,
-            count(p) AS total
-
+            count(DISTINCT p) AS total
         ORDER BY total DESC
         """
 
-        result = db.query(query)
+        result = db.query(
+            query,
+            {
+                "scope": context.get("scope"),
+                "estate_id": context.get("estate_id"),
+            },
+        )
 
         return Response(result)
 
@@ -199,23 +291,30 @@ def properties_by_status(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def residents_with_most_complaints(request):
-
+    context = get_authorization_context(request.user)
     db = Neo4jConnection()
 
     try:
-
         query = """
-        MATCH (r:Resident)-[:RAISED]->(c:Complaint)
-
+        MATCH (r:Resident)-[:RAISED]->(c:Complaint)-[:ABOUT]->(p:Property)
+            <-[:HAS_PROPERTY]-(e:Estate)
+        WHERE
+            $scope = "global"
+            OR e.estate_id = $estate_id
         RETURN
             r.resident_id AS resident_id,
             r.name AS resident_name,
-            count(c) AS total_complaints
-
+            count(DISTINCT c) AS total_complaints
         ORDER BY total_complaints DESC
         """
 
-        result = db.query(query)
+        result = db.query(
+            query,
+            {
+                "scope": context.get("scope"),
+                "estate_id": context.get("estate_id"),
+            },
+        )
 
         return Response(result)
 
@@ -225,24 +324,31 @@ def residents_with_most_complaints(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def properties_with_most_complaints(request):
-
+    context = get_authorization_context(request.user)
     db = Neo4jConnection()
 
     try:
-
         query = """
         MATCH (c:Complaint)-[:ABOUT]->(p:Property)
-
+            <-[:HAS_PROPERTY]-(e:Estate)
+        WHERE
+            $scope = "global"
+            OR e.estate_id = $estate_id
         RETURN
             p.property_id AS property_id,
             p.property_number AS property_number,
             p.property_type AS property_type,
-            count(c) AS total_complaints
-
+            count(DISTINCT c) AS total_complaints
         ORDER BY total_complaints DESC
         """
 
-        result = db.query(query)
+        result = db.query(
+            query,
+            {
+                "scope": context.get("scope"),
+                "estate_id": context.get("estate_id"),
+            },
+        )
 
         return Response(result)
 
@@ -252,14 +358,16 @@ def properties_with_most_complaints(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def recent_complaint_activity(request):
-
+    context = get_authorization_context(request.user)
     db = Neo4jConnection()
 
     try:
-
         query = """
         MATCH (r:Resident)-[:RAISED]->(c:Complaint)-[:ABOUT]->(p:Property)
-
+            <-[:HAS_PROPERTY]-(e:Estate)
+        WHERE
+            $scope = "global"
+            OR e.estate_id = $estate_id
         RETURN
             c.complaint_id AS complaint_id,
             c.title AS title,
@@ -269,12 +377,17 @@ def recent_complaint_activity(request):
             r.name AS resident_name,
             p.property_number AS property_number,
             toString(c.created_at) AS created_at
-
         ORDER BY c.created_at DESC
         LIMIT 5
         """
 
-        result = db.query(query)
+        result = db.query(
+            query,
+            {
+                "scope": context.get("scope"),
+                "estate_id": context.get("estate_id"),
+            },
+        )
 
         return Response(result)
 
