@@ -5134,6 +5134,9 @@ def ai_query_v3(request):
         else:
             cypher = generated
             parameters = {}
+            
+        if query_plan.get("scope") == "current_estate":
+            parameters["estate_id"] = query_plan["estate_id"]
 
         if not isinstance(cypher, str) or not cypher.strip():
             return Response(

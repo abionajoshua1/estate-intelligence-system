@@ -227,6 +227,47 @@ entity = complaint
 category = Electrical
 
 ==================================================
+IMPORTANT INTENT: ESTATE RANKING
+==================================================
+
+Questions asking which estate or estates have the most
+complaints MUST use:
+
+intent = estate_ranking
+
+entity = estate
+
+operation = rank
+
+Examples:
+
+"Which estate has the most complaints?"
+
+"Which estates have the most complaints?"
+
+"Which estate has the highest number of complaints?"
+
+MUST produce:
+
+{{
+    "intent": "estate_overview",
+    "entity": "estate",
+    "operation": "rank"
+}}
+
+Do NOT use:
+
+top_properties
+
+top_residents
+
+top_maintenance_teams
+
+general
+
+for these questions.
+
+==================================================
 ENTITY VALUES
 ==================================================
 
@@ -1782,16 +1823,49 @@ def generate_cypher(question: str, context=None, semantic_understanding=None,):
     ):
 
         print(">>> TOP RESIDENTS QUERY USED <<<")
+        print(">>> QUERY SCOPE:", query_scope)
+        print(">>> ESTATE ID:", plan_estate_id)
 
-        return """
-        MATCH (r:Resident)-[:RAISED]->(c:Complaint)
+        if query_scope == "current_estate":
 
-        RETURN
-            r.name AS resident,
-            COUNT(c) AS complaint_count
+            if not plan_estate_id:
+                print(">>> MISSING ESTATE ID FOR TOP RESIDENTS <<<")
+                return 'RETURN "ESTATE_CONTEXT_REQUIRED" AS error'
 
-        ORDER BY complaint_count DESC
-        """.strip()
+            print(">>> TOP RESIDENTS - SCOPED QUERY <<<")
+
+            return (
+                """
+                MATCH (r:Resident)-[:RAISED]->(c:Complaint)
+                    -[:ABOUT]->(p:Property)
+                    <-[:HAS_PROPERTY]-(e:Estate)
+
+                WHERE e.estate_id = $estate_id
+
+                RETURN
+                    r.name AS resident,
+                    COUNT(c) AS complaint_count
+
+                ORDER BY complaint_count DESC
+                """.strip(),
+                {
+                    "estate_id": plan_estate_id
+                },
+            )
+
+        if query_scope in ("global", "all_estates"):
+
+            print(">>> TOP RESIDENTS - GLOBAL QUERY <<<")
+
+            return """
+            MATCH (r:Resident)-[:RAISED]->(c:Complaint)
+
+            RETURN
+                r.name AS resident,
+                COUNT(c) AS complaint_count
+
+            ORDER BY complaint_count DESC
+            """.strip()
 
 
     # ----------------------------------------------------------
@@ -1804,16 +1878,48 @@ def generate_cypher(question: str, context=None, semantic_understanding=None,):
     ):
 
         print(">>> TOP PROPERTIES QUERY USED <<<")
+        print(">>> QUERY SCOPE:", query_scope)
+        print(">>> ESTATE ID:", plan_estate_id)
 
-        return """
-        MATCH (c:Complaint)-[:ABOUT]->(p:Property)
+        if query_scope == "current_estate":
 
-        RETURN
-            p.property_number AS property_number,
-            COUNT(c) AS complaint_count
+            if not plan_estate_id:
+                print(">>> MISSING ESTATE ID FOR TOP PROPERTIES <<<")
+                return 'RETURN "ESTATE_CONTEXT_REQUIRED" AS error'
 
-        ORDER BY complaint_count DESC
-        """.strip()
+            print(">>> TOP PROPERTIES - SCOPED QUERY <<<")
+
+            return (
+                """
+                MATCH (c:Complaint)-[:ABOUT]->(p:Property)
+                    <-[:HAS_PROPERTY]-(e:Estate)
+
+                WHERE e.estate_id = $estate_id
+
+                RETURN
+                    p.property_number AS property_number,
+                    COUNT(c) AS complaint_count
+
+                ORDER BY complaint_count DESC
+                """.strip(),
+                {
+                    "estate_id": plan_estate_id
+                },
+            )
+
+        if query_scope in ("global", "all_estates"):
+
+            print(">>> TOP PROPERTIES - GLOBAL QUERY <<<")
+
+            return """
+            MATCH (c:Complaint)-[:ABOUT]->(p:Property)
+
+            RETURN
+                p.property_number AS property_number,
+                COUNT(c) AS complaint_count
+
+            ORDER BY complaint_count DESC
+            """.strip()
 
 
     # ----------------------------------------------------------
@@ -1826,17 +1932,43 @@ def generate_cypher(question: str, context=None, semantic_understanding=None,):
     ):
 
         print(">>> TOP MAINTENANCE TEAMS QUERY USED <<<")
+        print(">>> QUERY SCOPE:", query_scope)
+        print(">>> ESTATE ID:", plan_estate_id)
 
-        return """
-        MATCH (c:Complaint)-[:ASSIGNED_TO]->(t:MaintenanceTeam)
+        if query_scope == "current_estate":
+            if not plan_estate_id:
+                return 'RETURN "ESTATE_CONTEXT_REQUIRED" AS error'
 
-        RETURN
-            t.team_name AS team,
-            COUNT(c) AS complaint_count
+            return (
+                """
+                MATCH (c:Complaint)-[:ASSIGNED_TO]->(t:MaintenanceTeam)
+                MATCH (c)-[:ABOUT]->(p:Property)
+                    <-[:HAS_PROPERTY]-(e:Estate)
 
-        ORDER BY complaint_count DESC
-        """.strip()
-        
+                WHERE e.estate_id = $estate_id
+
+                RETURN
+                    t.team_name AS team,
+                    COUNT(c) AS complaint_count
+
+                ORDER BY complaint_count DESC
+                """.strip(),
+                {
+                    "estate_id": plan_estate_id,
+                },
+            )
+
+        if query_scope in ("global", "all_estates"):
+            return """
+            MATCH (c:Complaint)-[:ASSIGNED_TO]->(t:MaintenanceTeam)
+
+            RETURN
+                t.team_name AS team,
+                COUNT(c) AS complaint_count
+
+            ORDER BY complaint_count DESC
+            """.strip()
+            
     # ==========================================================
     # PROPERTY MANAGER
     #
@@ -1848,19 +1980,71 @@ def generate_cypher(question: str, context=None, semantic_understanding=None,):
     if intent == "property_manager":
 
         resident_name = filters.get("resident_name")
+        property_number = filters.get("property_number")
+        estate_name = filters.get("estate_name")
 
-        if not resident_name:
-            return 'RETURN "RESIDENT_NAME_REQUIRED" AS error'
+        if not resident_name and not property_number and not estate_name:
+            return 'RETURN "RESIDENT_NAME_OR_PROPERTY_REQUIRED" AS error'
 
         print(">>> PROPERTY MANAGER QUERY USED <<<")
         print(">>> QUERY SCOPE:", query_scope)
         print(">>> ESTATE ID:", plan_estate_id)
         print(">>> RESIDENT:", resident_name)
-
+        print(">>> PROPERTY:", property_number)
+        print(">>> ESTATE:", estate_name)
         if query_scope == "current_estate":
 
             if not plan_estate_id:
                 return 'RETURN "ESTATE_CONTEXT_REQUIRED" AS error'
+
+            if estate_name:
+                return (
+                    """
+                    MATCH (e:Estate)-[:HAS_MANAGER]->(m:Manager)
+
+                    WHERE e.estate_id = $estate_id
+                    AND toLower(trim(e.name)) =
+                        toLower(trim($estate_name))
+
+                    RETURN
+                        m.manager_id AS manager_id,
+                        m.name AS manager_name,
+                        e.estate_id AS estate_id,
+                        e.name AS estate_name
+
+                    ORDER BY m.name
+                    """.strip(),
+                    {
+                        "estate_id": plan_estate_id,
+                        "estate_name": estate_name,
+                    },
+                )
+
+            if property_number:
+                return (
+                    """
+                    MATCH (e:Estate)-[:HAS_PROPERTY]->(p:Property)
+                    MATCH (e)-[:HAS_MANAGER]->(m:Manager)
+
+                    WHERE e.estate_id = $estate_id
+                    AND toLower(trim(p.property_number)) =
+                        toLower(trim($property_number))
+
+                    RETURN
+                        p.property_id AS property_id,
+                        p.property_number AS property_number,
+                        m.manager_id AS manager_id,
+                        m.name AS manager_name,
+                        e.estate_id AS estate_id,
+                        e.name AS estate_name
+
+                    ORDER BY m.name
+                    """.strip(),
+                    {
+                        "estate_id": plan_estate_id,
+                        "property_number": property_number,
+                    },
+                )
 
             return (
                 """
@@ -1891,6 +2075,30 @@ def generate_cypher(question: str, context=None, semantic_understanding=None,):
             )
 
         if query_scope in ("global", "all_estates"):
+
+            if property_number:
+                return (
+                    """
+                    MATCH (e:Estate)-[:HAS_PROPERTY]->(p:Property)
+                    MATCH (e)-[:HAS_MANAGER]->(m:Manager)
+
+                    WHERE toLower(trim(p.property_number)) =
+                        toLower(trim($property_number))
+
+                    RETURN
+                        p.property_id AS property_id,
+                        p.property_number AS property_number,
+                        m.manager_id AS manager_id,
+                        m.name AS manager_name,
+                        e.estate_id AS estate_id,
+                        e.name AS estate_name
+
+                    ORDER BY e.name, m.name
+                    """.strip(),
+                    {
+                        "property_number": property_number,
+                    },
+                )
 
             return (
                 """
@@ -3523,34 +3731,39 @@ def analyze_results(question: str, data, intent=None, operation=None, entity=Non
     # ==========================================================
 
     if intent == "open_complaints":
-
         count = 0
 
         if data:
-
             count = int(
                 data[0].get(
-                    "open_complaint_count",
-                    0
+                    "complaint_count",
+                    data[0].get("open_complaint_count", 0)
                 )
             )
+
+        if "resolved" in q:
+            status_label = "resolved"
+        elif "in progress" in q:
+            status_label = "in progress"
+        else:
+            status_label = "open"
 
         return {
             "analysis": (
                 f"There {'is' if count == 1 else 'are'} "
-                f"{count} open "
+                f"{count} {status_label} "
                 f"{pluralize('complaint', count)}."
             ),
             "insights": [
                 (
                     f"The system currently records "
-                    f"{count} open "
+                    f"{count} {status_label} "
                     f"{pluralize('complaint', count)}."
                 )
             ],
             "reasoning": [
-                "The count was obtained directly from complaints "
-                "currently marked as open in Neo4j."
+                f"The count was obtained directly from complaints "
+                f"currently marked as {status_label} in Neo4j."
             ],
             "actions": [],
             "data": data,
