@@ -461,6 +461,13 @@ USER QUESTION
         }
 
         intent = understanding.get("intent", "general")
+        
+        intent_aliases = {
+            "resident_by_estate": "residents_by_estate",
+        }
+        
+        intent = intent_aliases.get(intent, intent)
+        
         entity = understanding.get("entity", "system")
         operation = understanding.get("operation", "find")
         filters = understanding.get("filters", {})
@@ -468,7 +475,7 @@ USER QUESTION
             "semantic_query",
             question,
         )
-
+        
         if intent not in allowed_intents:
             intent = "general"
 
@@ -2885,8 +2892,50 @@ def analyze_results(question: str, data, intent=None, operation=None, entity=Non
     
     # ==========================================================
     # CURRENT ESTATE STATE
-    # ==========================================================
+    # ========================================================== 
     
+    if (
+        intent == "current_estate_state"
+        and entity == "complaint"
+        and operation == "count"
+        and len(data) == 1  
+    ):
+        row = data[0]
+        
+        count = int(
+            row.get("complaint_count") or 
+            row.get("open_complaint_count") or
+            0
+        )
+        
+        if "resolved" in q:
+            status_label = "resolved"
+        elif "in progress" in q:
+            status_label = "in progress"
+        else:
+            status_label = "open"
+
+        return {
+            "ana;ysis": (
+                f"There {'is' if count == 1 else 'are'} "
+                f"{count} {status_label} "
+                f"{pluralize('complaint', count)}."
+            ),
+            "insights": [
+                (
+                    f"The system currently records"
+                    f"{count} {status_label} "
+                    f"{pluralize('complaint', count)}."
+                )
+            ],
+            "reasoning": [
+                f"The count was obtained directly from complaints"
+                f"currently marked as {status_label} in the Neo4j database."
+            ],
+            "actions": [],
+            "data": data,
+        }
+
     if intent == "current_estate_state" and len(data) == 1:
 
         row = data[0]
@@ -4247,6 +4296,15 @@ def analyze_results(question: str, data, intent=None, operation=None, entity=Non
                 "_",
                 " "
             )
+
+            if entity_name == "complaint":
+
+                if "resolved" in q:
+                    entity_name = "resolved complaint"
+                elif "in progress" in q:
+                    entity_name = "in progress complaint"
+                elif "open" in q:
+                    entity_name = "open complaint"
 
             return {
                 "analysis": (
