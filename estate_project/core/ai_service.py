@@ -1,3 +1,4 @@
+from django.contrib.admin import filters
 from groq import Groq
 from django.conf import settings
 from .schema import GRAPH_SCHEMA
@@ -467,7 +468,6 @@ USER QUESTION
         }
         
         intent = intent_aliases.get(intent, intent)
-        
         entity = understanding.get("entity", "system")
         operation = understanding.get("operation", "find")
         filters = understanding.get("filters", {})
@@ -475,6 +475,16 @@ USER QUESTION
             "semantic_query",
             question,
         )
+        
+        # Normalize complaint category counts
+        if (
+            intent == "general"
+            and entity == "complaint"
+            and operation == "count"
+            and isinstance(filters, dict)
+            and filters.get("complaint_category")
+        ):
+            intent = "open_complaints"
         
         if intent not in allowed_intents:
             intent = "general"
@@ -1814,6 +1824,69 @@ def generate_cypher(question: str, context=None, semantic_understanding=None,):
             """.strip()
 
         return 'RETURN "UNSUPPORTED_QUERY" AS error'
+    
+    # ==========================================================
+    # COMPLAINT CATEGORY COUNT
+    #
+    # Examples:
+    # How many electrical complaints are in my estate?
+    # How many plumbing complaints are there?
+    # ==========================================================
+
+    complaint_category = filters.get("complaint_category")
+
+    if (
+        entity == "complaint"
+        and operation == "count"
+        and complaint_category
+    ):
+
+        print(">>> COMPLAINT CATEGORY COUNT QUERY USED <<<")
+        print(">>> CATEGORY:", complaint_category)
+        print(">>> QUERY SCOPE:", query_scope)
+        print(">>> ESTATE ID:", plan_estate_id)
+
+        if query_scope == "current_estate":
+
+            if not plan_estate_id:
+                return 'RETURN "ESTATE_CONTEXT_REQUIRED" AS error'
+
+            return (
+                """
+                MATCH (e:Estate)-[:HAS_PROPERTY]->(p:Property)
+                    <-[:ABOUT]-(c:Complaint)
+
+                WHERE e.estate_id = $estate_id
+                  AND toLower(trim(c.category)) =
+                      toLower(trim($complaint_category))
+
+                RETURN
+                    COUNT(c) AS category_complaint_count
+                """.strip(),
+                {
+                    "estate_id": plan_estate_id,
+                    "complaint_category": complaint_category,
+                },
+            )
+
+        if query_scope in ("global", "all_estates"):
+
+            return (
+                """
+                MATCH (c:Complaint)
+
+                WHERE toLower(trim(c.category)) =
+                      toLower(trim($complaint_category))
+
+                RETURN
+                    COUNT(c) AS category_complaint_count
+                """.strip(),
+                {
+                    "complaint_category": complaint_category,
+                },
+            )
+
+        return 'RETURN "UNSUPPORTED_QUERY" AS error'
 
 
     # ==========================================================
@@ -2530,7 +2603,7 @@ Be concise and accurate.
         return ""
 
 
-def analyze_results(question: str, data, intent=None, operation=None, entity=None):   
+def analyze_results(question: str, data, intent=None, operation=None, entity=None, filters=None):   
         
     """
     Deterministic semantic reasoning layer.
@@ -3779,7 +3852,67 @@ def analyze_results(question: str, data, intent=None, operation=None, entity=Non
     # How many open complaints are there?
     # ==========================================================
 
+    print(">>> ANALYZE INTENT <<<", repr(intent))
+    print(">>> ANALYZE FILTERS <<<", repr(filters))
+
     if intent == "open_complaints":
+        
+        print(">>> OPEN COMPLAINTS BRANCH REACHED <<<")
+        print(">>> CATEGORY <<<", repr(filters.get("complaint_category")))
+        print(">>> DATA <<<", repr(data))
+
+        complaint_category = (
+            filters.get("complaint_category")
+            if isinstance(filters, dict)
+            else None
+        )
+
+        # ------------------------------------------------------
+        # Complaint category count
+        # ------------------------------------------------------
+
+        if complaint_category:
+
+            count = 0
+
+            if data:
+                count = int(
+                    data[0].get(
+                        "category_complaint_count",
+                        0
+                    )
+                )
+
+            category_label = str(
+                complaint_category
+            ).lower()
+
+            return {
+                "analysis": (
+                    f"There {'is' if count == 1 else 'are'} "
+                    f"{count} "
+                    f"{category_label} "
+                    f"{pluralize('complaint', count)}."
+                ),
+                "insights": [
+                    (
+                        f"The system currently records "
+                        f"{count} {category_label} "
+                        f"{pluralize('complaint', count)}."
+                    )
+                ],
+                "reasoning": [
+                    f"The count was obtained directly from "
+                    f"{complaint_category} complaints in Neo4j."
+                ],
+                "actions": [],
+                "data": data,
+            }
+
+        # ------------------------------------------------------
+        # Existing open/resolved/in-progress count
+        # ------------------------------------------------------
+
         count = 0
 
         if data:

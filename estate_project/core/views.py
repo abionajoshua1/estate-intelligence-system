@@ -5195,6 +5195,7 @@ def ai_query_v3(request):
             intent,
             understanding["operation"],
             understanding["entity"],
+            understanding.get("filters", {})
         )
 
         print("=" * 80)
