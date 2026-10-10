@@ -246,12 +246,20 @@ class Notification(models.Model):
 # SIGNALS
 # ==========================================================
 
+
 @receiver(post_save, sender=User)
-def create_profile(sender, instance, created, **kwargs):
+def create_profile(sender, instance, created, raw=False, **kwargs):
+    if raw:
+        return
+
     if created:
-        Profile.objects.create(user=instance)
+        Profile.objects.get_or_create(user=instance)
 
 
 @receiver(post_save, sender=User)
-def save_profile(sender, instance, **kwargs):
-    instance.profile.save()
+def save_profile(sender, instance, raw=False, **kwargs):
+    if raw:
+        return
+
+    if hasattr(instance, "profile"):
+        instance.profile.save()

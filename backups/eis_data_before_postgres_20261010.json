@@ -1,0 +1,234 @@
+[
+{
+  "model": "auth.user",
+  "pk": 1,
+  "fields": {
+    "password": "pbkdf2_sha256$1200000$thHRNqStchfgZJhYK6afdj$hZHYqheKHklCmOYZwLv71yE4zAj0KSG/tr/RYbdqgXI=",
+    "last_login": null,
+    "is_superuser": true,
+    "username": "joshuaboat",
+    "first_name": "",
+    "last_name": "",
+    "email": "joshabiona1@gmail.com",
+    "is_staff": true,
+    "is_active": true,
+    "date_joined": "2026-05-11T20:55:11.614Z",
+    "groups": [],
+    "user_permissions": []
+  }
+},
+{
+  "model": "auth.user",
+  "pk": 3,
+  "fields": {
+    "password": "pbkdf2_sha256$1200000$OygtdFlxdEys5AoEW5Afcr$6NRXoC2gj/OdRafxvxOr7u6j0yRytTpzDARwnD75u8o=",
+    "last_login": null,
+    "is_superuser": false,
+    "username": "jalen",
+    "first_name": "Jalen",
+    "last_name": "Green",
+    "email": "jalengreen@gmail.com",
+    "is_staff": false,
+    "is_active": true,
+    "date_joined": "2026-07-29T05:22:11.342Z",
+    "groups": [],
+    "user_permissions": []
+  }
+},
+{
+  "model": "auth.user",
+  "pk": 4,
+  "fields": {
+    "password": "pbkdf2_sha256$1200000$cuIiRvlwhrmWIPRe5BH2kW$IjONVTRBhgcqLFUxcscpRuFpmFdHecuk2oLncA8YZuk=",
+    "last_login": "2026-07-29T18:28:15.844Z",
+    "is_superuser": true,
+    "username": "wunmi",
+    "first_name": "",
+    "last_name": "",
+    "email": "adewunmi@gmail.com",
+    "is_staff": true,
+    "is_active": true,
+    "date_joined": "2026-07-29T18:27:29.272Z",
+    "groups": [],
+    "user_permissions": []
+  }
+},
+{
+  "model": "auth.user",
+  "pk": 5,
+  "fields": {
+    "password": "pbkdf2_sha256$1200000$Zljo88SaAl5SXPO7tm7TBt$NQVKu7Kkjit20YfAkVJbP1GXpGLwFkEi4vJaFUFvZ+A=",
+    "last_login": null,
+    "is_superuser": false,
+    "username": "abiona.lydia",
+    "first_name": "Abiona Oluwjomiloju",
+    "last_name": "Lydia",
+    "email": "abiona.lydia@example.com",
+    "is_staff": false,
+    "is_active": true,
+    "date_joined": "2026-08-29T22:45:59.262Z",
+    "groups": [],
+    "user_permissions": []
+  }
+},
+{
+  "model": "dashboard.profile",
+  "pk": 1,
+  "fields": {
+    "user": 1,
+    "role": "manager",
+    "resident_id": null,
+    "manager_id": "M001"
+  }
+},
+{
+  "model": "dashboard.profile",
+  "pk": 3,
+  "fields": {
+    "user": 3,
+    "role": "resident",
+    "resident_id": "R009",
+    "manager_id": null
+  }
+},
+{
+  "model": "dashboard.profile",
+  "pk": 4,
+  "fields": {
+    "user": 4,
+    "role": "admin",
+    "resident_id": null,
+    "manager_id": null
+  }
+},
+{
+  "model": "dashboard.profile",
+  "pk": 5,
+  "fields": {
+    "user": 5,
+    "role": "resident",
+    "resident_id": "R006",
+    "manager_id": null
+  }
+},
+{
+  "model": "dashboard.complaint",
+  "pk": 1,
+  "fields": {
+    "resident": 3,
+    "property": null,
+    "title": "Broken water pipe",
+    "description": "Water pipe is leaking.",
+    "category": "water",
+    "location": "Block A",
+    "priority": "high",
+    "status": "pending",
+    "assigned_to": null,
+    "resolution_note": null,
+    "expected_completion": null,
+    "created_at": "2026-09-05T10:18:48.920Z",
+    "updated_at": "2026-09-07T13:41:12.299Z",
+    "resolved_at": null
+  }
+},
+{
+  "model": "dashboard.complaint",
+  "pk": 2,
+  "fields": {
+    "resident": 5,
+    "property": null,
+    "title": "Damaged gate",
+    "description": "The estate gate is damaged.",
+    "category": "security",
+    "location": "Main gate",
+    "priority": "medium",
+    "status": "pending",
+    "assigned_to": null,
+    "resolution_note": null,
+    "expected_completion": null,
+    "created_at": "2026-09-05T10:19:18.694Z",
+    "updated_at": "2026-09-05T10:19:18.694Z",
+    "resolved_at": null
+  }
+},
+{
+  "model": "dashboard.complaint",
+  "pk": 4,
+  "fields": {
+    "resident": 3,
+    "property": null,
+    "title": "Leaking tap",
+    "description": "The bathroom tap is leaking",
+    "category": "water",
+    "location": "Block A",
+    "priority": "medium",
+    "status": "pending",
+    "assigned_to": null,
+    "resolution_note": null,
+    "expected_completion": null,
+    "created_at": "2026-09-06T15:41:41.874Z",
+    "updated_at": "2026-09-06T15:41:41.874Z",
+    "resolved_at": null
+  }
+},
+{
+  "model": "dashboard.notification",
+  "pk": 1,
+  "fields": {
+    "user": 1,
+    "title": "Test Notification",
+    "message": "This is a test notification from the Estate Intelligence System.",
+    "notification_type": "system",
+    "is_read": true,
+    "created_at": "2026-08-29T08:42:12.519Z"
+  }
+},
+{
+  "model": "dashboard.notification",
+  "pk": 2,
+  "fields": {
+    "user": 1,
+    "title": "Complaint Updated",
+    "message": "Your complaint status has been updated.",
+    "notification_type": "complaint",
+    "is_read": true,
+    "created_at": "2026-08-29T08:43:53.390Z"
+  }
+},
+{
+  "model": "dashboard.notification",
+  "pk": 3,
+  "fields": {
+    "user": 1,
+    "title": "Maintenance Notice",
+    "message": "A maintenance activity has been scheduled.",
+    "notification_type": "maintenance",
+    "is_read": true,
+    "created_at": "2026-08-29T08:43:53.398Z"
+  }
+},
+{
+  "model": "dashboard.notification",
+  "pk": 4,
+  "fields": {
+    "user": 1,
+    "title": "System Notice",
+    "message": "The estate system has been updated.",
+    "notification_type": "system",
+    "is_read": true,
+    "created_at": "2026-08-29T08:43:55.711Z"
+  }
+},
+{
+  "model": "dashboard.notification",
+  "pk": 9,
+  "fields": {
+    "user": 3,
+    "title": "Complaint Assigned",
+    "message": "Your complaint \"Generator Noise\" has been assigned to the Electrical Team and is now In Progress.",
+    "notification_type": "complaint",
+    "is_read": true,
+    "created_at": "2026-08-29T23:28:39.564Z"
+  }
+}
+]
