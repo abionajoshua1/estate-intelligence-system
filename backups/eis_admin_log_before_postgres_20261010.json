@@ -1,0 +1,74 @@
+[
+{
+  "model": "admin.logentry",
+  "pk": 1,
+  "fields": {
+    "action_time": "2026-07-29T18:29:26.570Z",
+    "user": [
+      "wunmi"
+    ],
+    "content_type": [
+      "dashboard",
+      "profile"
+    ],
+    "object_id": "4",
+    "object_repr": "wunmi (admin)",
+    "action_flag": 2,
+    "change_message": "[{\"changed\": {\"fields\": [\"Role\"]}}]"
+  }
+},
+{
+  "model": "admin.logentry",
+  "pk": 2,
+  "fields": {
+    "action_time": "2026-07-29T18:29:29.600Z",
+    "user": [
+      "wunmi"
+    ],
+    "content_type": [
+      "dashboard",
+      "profile"
+    ],
+    "object_id": "3",
+    "object_repr": "jalen (resident)",
+    "action_flag": 2,
+    "change_message": "[]"
+  }
+},
+{
+  "model": "admin.logentry",
+  "pk": 3,
+  "fields": {
+    "action_time": "2026-07-29T18:29:34.138Z",
+    "user": [
+      "wunmi"
+    ],
+    "content_type": [
+      "dashboard",
+      "profile"
+    ],
+    "object_id": "2",
+    "object_repr": "joshua (resident)",
+    "action_flag": 2,
+    "change_message": "[]"
+  }
+},
+{
+  "model": "admin.logentry",
+  "pk": 4,
+  "fields": {
+    "action_time": "2026-07-29T18:29:40.049Z",
+    "user": [
+      "wunmi"
+    ],
+    "content_type": [
+      "dashboard",
+      "profile"
+    ],
+    "object_id": "1",
+    "object_repr": "joshuaboat (manager)",
+    "action_flag": 2,
+    "change_message": "[{\"changed\": {\"fields\": [\"Role\"]}}]"
+  }
+}
+]

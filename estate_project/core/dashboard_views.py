@@ -1,3 +1,7 @@
+from django.core.cache import cache
+from django_redis.exceptions import ConnectionInterrupted
+from redis.exceptions import RedisError
+
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -18,6 +22,22 @@ from .authorization import get_authorization_context
 def dashboard_overview(request):
     
     context = get_authorization_context(request.user)
+
+    cache_key = (
+        f"dashboard_overview:"
+        f"user:{request.user.pk}:"
+        f"{context.get('role')}:"
+        f"{context.get('scope')}:"
+        f"{context.get('estate_id') or 'all'}"
+    )
+
+    try:
+        cached_data = cache.get(cache_key)
+    except (ConnectionInterrupted, RedisError):
+        cached_data = None
+
+    if cached_data is not None:
+        return Response(cached_data)
 
     db = Neo4jConnection()
 
@@ -206,7 +226,7 @@ def dashboard_overview(request):
         resolved_complaints = resolved_count[0]["resolved_complaints"]
 
 
-        return Response({
+        response_data = {
             "total_residents": total_residents,
             "total_properties": total_properties,
             "available_properties": available_properties,
@@ -217,7 +237,14 @@ def dashboard_overview(request):
             "open_complaints": open_complaints,
             "in_progress_complaints": in_progress_complaints,
             "resolved_complaints": resolved_complaints,
-        })
+        }
+
+        try:
+            cache.set(cache_key, response_data, timeout=30)
+        except (ConnectionInterrupted, RedisError):
+            pass
+
+        return Response(response_data)
 
     finally:
         db.close()

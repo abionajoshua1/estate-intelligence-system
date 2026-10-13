@@ -36,6 +36,8 @@ class DashboardAuthorizationTests(APITestCase):
 
         mock_db = mock_db_class.return_value
 
+
+
         mock_db.query.side_effect = [
             [{"total_residents": 5}],
             [{"total_properties": 10}],
@@ -43,11 +45,13 @@ class DashboardAuthorizationTests(APITestCase):
             [{"available_properties": 2}],
             [{"occupied_properties": 6}],
             [{"maintenance_properties": 2}],
-            [{"total_complaints": 4}],
-            [{"open_complaints": 1}],
-            [{"in_progress_complaints": 1}],
-            [{"resolved_complaints": 2}],
+            [{"total_complaints": 8}],
+            [{"open_complaints": 3}],
+            [{"in_progress_complaints": 2}],
+            [{"resolved_complaints": 3}],
         ]
+
+
 
         response = self.client.get("/api/dashboard/overview/")
 
@@ -619,3 +623,158 @@ class DashboardAuthorizationTests(APITestCase):
         self.assertIn('$scope = "global"', query)
         self.assertEqual(parameters["scope"], "global")
         self.assertIsNone(parameters["estate_id"])
+        
+
+    def test_dashboard_cache_hit_skips_neo4j(self):
+        from unittest.mock import patch
+
+        context = {
+            "role": "manager",
+            "estate_id": "E001",
+            "estate_name": "Greenfield",
+            "scope": "current_estate",
+        }
+        cached_data = {
+            "total_residents": 5,
+            "total_properties": 10,
+            "available_properties": 2,
+            "occupied_properties": 6,
+            "maintenance_properties": 2,
+            "total_estates": 1,
+            "total_complaints": 8,
+            "open_complaints": 3,
+            "in_progress_complaints": 2,
+            "resolved_complaints": 3,
+        }
+
+        with (
+            patch(
+                "core.dashboard_views.get_authorization_context",
+                return_value=context,
+            ),
+            patch(
+                "core.dashboard_views.cache.get",
+                return_value=cached_data,
+            ) as mock_cache_get,
+            patch("core.dashboard_views.cache.set") as mock_cache_set,
+            patch("core.dashboard_views.Neo4jConnection") as mock_db_class,
+        ):
+            response = self.client.get("/api/dashboard/overview/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, cached_data)
+        mock_cache_get.assert_called_once_with(
+            f"dashboard_overview:user:{self.user.pk}:"
+            "manager:current_estate:E001"
+        )
+        mock_db_class.assert_not_called()
+        mock_cache_set.assert_not_called()
+
+
+
+    def test_dashboard_cache_miss_queries_neo4j_and_sets_cache(self):
+        from unittest.mock import patch
+
+        context = {
+            "role": "manager",
+            "estate_id": "E001",
+            "estate_name": "Greenfield",
+            "scope": "current_estate",
+        }
+
+        with (
+            patch(
+                "core.dashboard_views.get_authorization_context",
+                return_value=context,
+            ),
+            patch(
+                "core.dashboard_views.cache.get",
+                return_value=None,
+            ) as mock_cache_get,
+            patch("core.dashboard_views.cache.set") as mock_cache_set,
+            patch("core.dashboard_views.Neo4jConnection") as mock_db_class,
+        ):
+            mock_db = mock_db_class.return_value
+            mock_db.query.side_effect = [
+                [{"total_residents": 5}],
+                [{"total_properties": 10}],
+                [{"total_estates": 1}],
+                [{"available_properties": 2}],
+                [{"occupied_properties": 6}],
+                [{"maintenance_properties": 2}],
+                [{"total_complaints": 8}],
+                [{"open_complaints": 3}],
+                [{"in_progress_complaints": 2}],
+                [{"resolved_complaints": 3}],
+            ]
+
+            response = self.client.get("/api/dashboard/overview/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["total_residents"], 5)
+        self.assertEqual(response.data["total_properties"], 10)
+        self.assertEqual(response.data["total_estates"], 1)
+
+        mock_cache_get.assert_called_once_with(
+            f"dashboard_overview:user:{self.user.pk}:"
+            "manager:current_estate:E001"
+        )
+        mock_db_class.assert_called_once()
+        self.assertEqual(mock_db.query.call_count, 10)
+        mock_cache_set.assert_called_once_with(
+            f"dashboard_overview:user:{self.user.pk}:"
+            "manager:current_estate:E001",
+            response.data,
+            timeout=30,
+        )
+        mock_db.close.assert_called_once()
+        
+    
+    def test_dashboard_redis_outage_falls_back_to_neo4j(self):
+        from unittest.mock import patch
+        from redis.exceptions import RedisError
+
+        context = {
+            "role": "manager",
+            "estate_id": "E001",
+            "estate_name": "Greenfield",
+            "scope": "current_estate",
+        }
+
+        with (
+            patch(
+                "core.dashboard_views.get_authorization_context",
+                return_value=context,
+            ),
+            patch(
+                "core.dashboard_views.cache.get",
+                side_effect=RedisError("Redis unavailable"),
+            ),
+            patch(
+                "core.dashboard_views.cache.set",
+                side_effect=RedisError("Redis unavailable"),
+            ),
+            patch("core.dashboard_views.Neo4jConnection") as mock_db_class,
+        ):
+            mock_db = mock_db_class.return_value
+            mock_db.query.side_effect = [
+                [{"total_residents": 5}],
+                [{"total_properties": 10}],
+                [{"total_estates": 1}],
+                [{"available_properties": 2}],
+                [{"occupied_properties": 6}],
+                [{"maintenance_properties": 2}],
+                [{"total_complaints": 8}],
+                [{"open_complaints": 3}],
+                [{"in_progress_complaints": 2}],
+                [{"resolved_complaints": 3}],
+            ]
+
+            response = self.client.get("/api/dashboard/overview/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["total_residents"], 5)
+        self.assertEqual(response.data["total_properties"], 10)
+        self.assertEqual(mock_db.query.call_count, 10)
+        mock_db.close.assert_called_once()
+
