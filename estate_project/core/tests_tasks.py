@@ -3,7 +3,9 @@ from django.core import mail
 from django.test import TestCase, override_settings
 
 from .tasks import send_complaint_email
+from unittest.mock import patch
 
+from .views import queue_complaint_email
 
 @override_settings(
     EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
@@ -66,3 +68,54 @@ class SendComplaintEmailTests(TestCase):
 
         self.assertEqual(result, "skipped_user_not_found")
         self.assertEqual(len(mail.outbox), 0)
+
+
+
+class QueueComplaintEmailTests(TestCase):
+
+    def setUp(self):
+        self.User = get_user_model()
+        self.user = self.User.objects.create_user(
+            username="queue_resident",
+            email="queue@example.com",
+        )
+
+    @patch("core.views.send_complaint_email.delay")
+    def test_valid_email_is_queued(self, mock_delay):
+        queue_complaint_email(
+            self.user,
+            "Complaint Submitted",
+            "Your complaint has been submitted.",
+        )
+
+        mock_delay.assert_called_once_with(
+            self.user.pk,
+            "Complaint Submitted",
+            "Your complaint has been submitted.",
+        )
+
+    @patch("core.views.send_complaint_email.delay")
+    def test_missing_email_is_not_queued(self, mock_delay):
+        self.user.email = ""
+        self.user.save()
+
+        queue_complaint_email(
+            self.user,
+            "Complaint Submitted",
+            "Your complaint has been submitted.",
+        )
+
+        mock_delay.assert_not_called()
+
+    @patch(
+        "core.views.send_complaint_email.delay",
+        side_effect=RuntimeError("Broker unavailable"),
+    )
+    def test_broker_failure_does_not_propagate(self, mock_delay):
+        queue_complaint_email(
+            self.user,
+            "Complaint Submitted",
+            "Your complaint has been submitted.",
+        )
+
+        mock_delay.assert_called_once()

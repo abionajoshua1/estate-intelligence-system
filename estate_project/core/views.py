@@ -4368,6 +4368,17 @@ def assign_complaint_to_team(request):
                     ),
                     notification_type="complaint",
                 )
+                
+                queue_complaint_email(
+                    resident_profile.user,
+                    "Complaint Assigned",
+                    (
+                        f'Your complaint "{assignment[0]["complaint_title"]}" '
+                        f'has been assigned to '
+                        f'{assignment[0]["team_name"]} and is now In Progress.'
+                    ),
+                )
+
 
             except Profile.DoesNotExist as e:
                 print("NOTIFICATION PROFILE ERROR:", e)
