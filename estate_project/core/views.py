@@ -1,6 +1,9 @@
 #from django import db
 import email
 import re
+import logging
+
+from .tasks import send_complaint_email
 
 from django.contrib.auth.models import User
 
@@ -58,6 +61,25 @@ from .authorization import (
     AuthorizationError,
 )
 
+logger = logging.getLogger(__name__)
+
+
+def queue_complaint_email(user, subject, message):
+    """Queue a complaint email without breaking the complaint API."""
+    if not user.email or not user.email.strip():
+        return
+
+    try:
+        getattr(send_complaint_email, "delay")(
+            user.pk,
+            subject,
+            message,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to queue complaint email for user ID %s.",
+            user.pk,
+        )
 
 # =========================
 # INTENTS
@@ -1676,6 +1698,26 @@ def create_complaint(request):
                 "priority": priority,
             }
         )
+        
+        if complaint:
+            try:
+                resident_profile = Profile.objects.get(
+                    resident_id=resident_id,
+                )
+
+                queue_complaint_email(
+                    resident_profile.user,
+                    "Complaint Submitted",
+                    (
+                        f'Your complaint "{title}" has been submitted '
+                        "successfully and is currently Open."
+                    ),
+                )
+            except Profile.DoesNotExist:
+                logger.warning(
+                    "Complaint email skipped: no profile for resident ID %s.",
+                    resident_id,
+                )
 
         # ----------------------------------------------------------
         # Create notification for the resident
@@ -1692,7 +1734,8 @@ def create_complaint(request):
                 ),
                 notification_type="complaint",
             )
-
+        
+    
         return Response(
             {
                 "message": "Complaint created successfully.",
@@ -2325,6 +2368,12 @@ def update_complaint(request, complaint_id):
                     message=notification_messages[status_value],
                     notification_type="complaint",
                 )
+                
+                queue_complaint_email(
+                    resident_profile.user,
+                    notification_titles[status_value],
+                    notification_messages[status_value],
+            )
 
             except Profile.DoesNotExist:
                 # The complaint remains successfully updated
