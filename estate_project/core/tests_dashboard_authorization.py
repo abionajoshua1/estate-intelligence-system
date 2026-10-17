@@ -777,4 +777,25 @@ class DashboardAuthorizationTests(APITestCase):
         self.assertEqual(response.data["total_properties"], 10)
         self.assertEqual(mock_db.query.call_count, 10)
         mock_db.close.assert_called_once()
+        
+    @patch("core.dashboard_views.Neo4jConnection")
+    @patch("core.dashboard_views.get_authorization_context")
+    def test_unlinked_resident_gets_controlled_response(
+        self,
+        mock_context,
+        mock_db_class,
+    ):
+        self.user.profile.role = "resident"
+        self.user.profile.resident_id = None
+        self.user.profile.save()
+
+        mock_context.side_effect = ValueError(
+            "Resident account is not linked to a resident record."
+        )
+
+        response = self.client.get("/api/dashboard/top-residents/")
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        mock_db_class.assert_not_called()
+
 

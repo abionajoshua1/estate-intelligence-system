@@ -2373,7 +2373,7 @@ def update_complaint(request, complaint_id):
                     resident_profile.user,
                     notification_titles[status_value],
                     notification_messages[status_value],
-            )
+                )
 
             except Profile.DoesNotExist:
                 # The complaint remains successfully updated

@@ -14,7 +14,7 @@ from rest_framework.response import Response
 
 from .neo4j_connection import Neo4jConnection
 
-from .authorization import get_authorization_context
+from .authorization import get_authorization_context, AuthorizationError
 
 
 @api_view(["GET"])
@@ -318,7 +318,14 @@ def properties_by_status(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def residents_with_most_complaints(request):
-    context = get_authorization_context(request.user)
+    try:
+        context = get_authorization_context(request.user)
+    except (AuthorizationError, ValueError) as exc:
+        return Response(
+            {"error": str(exc)},
+            status=403,
+        )
+
     db = Neo4jConnection()
 
     try:
