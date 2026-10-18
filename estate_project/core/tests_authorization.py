@@ -60,7 +60,7 @@ class ComplaintAuthorizationTests(APITestCase):
             "not authorized",
             response.data["error"].lower(),
         )
-        
+
     @patch("core.views.Neo4jConnection")
     @patch("core.views.get_authorization_context")
     def test_resident_cannot_search_other_estate_resident(
@@ -74,10 +74,10 @@ class ComplaintAuthorizationTests(APITestCase):
             "estate_name": "Voera Estate",
             "scope": "current_estate",
         }
-        
+
         self.user.profile.resident_id = "R006"
         self.user.profile.save()
-        
+
         mock_db = mock_db_class.return_value
         mock_db.query.return_value = []
 
@@ -97,11 +97,11 @@ class ComplaintAuthorizationTests(APITestCase):
             response.data,
             [],
         )
-        
+
 
         call_args = mock_db.query.call_args
         parameters = call_args.args[1]
-        
+
         query = call_args.args[0]
 
         self.assertIn(
@@ -113,7 +113,7 @@ class ComplaintAuthorizationTests(APITestCase):
             'r.resident_id = $resident_id',
             query,
         )
-        
+
         self.assertEqual(
             parameters["role"],
             "resident",
@@ -128,7 +128,7 @@ class ComplaintAuthorizationTests(APITestCase):
             parameters["resident_id"],
             "R006",
         )
-    
+
     @patch("core.views.Neo4jConnection")
     @patch("core.views.get_authorization_context")
     def test_resident_cannot_search_other_property(
@@ -194,7 +194,7 @@ class ComplaintAuthorizationTests(APITestCase):
             parameters["resident_id"],
             "R006",
         )
-        
+
     @patch("core.views.Neo4jConnection")
     @patch("core.views.get_authorization_context")
     def test_resident_cannot_search_other_resident_complaint(
@@ -260,7 +260,7 @@ class ComplaintAuthorizationTests(APITestCase):
             parameters["resident_id"],
             "R006",
         )
-        
+
     @patch("core.views.Neo4jConnection")
     @patch("core.views.get_authorization_context")
     @patch("core.views.authorize_resource")
@@ -310,7 +310,7 @@ class ComplaintAuthorizationTests(APITestCase):
             "complaint",
             "C002",
         )
-        
+
     @patch("core.views.Neo4jConnection")
     @patch("core.views.get_authorization_context")
     @patch("core.views.authorize_resource")
@@ -358,7 +358,7 @@ class ComplaintAuthorizationTests(APITestCase):
         )
 
         mock_db_class.assert_not_called()
-        
+
     @patch("core.views.Neo4jConnection")
     @patch("core.views.get_authorization_context")
     @patch("core.views.authorize_resource")
@@ -402,7 +402,7 @@ class ComplaintAuthorizationTests(APITestCase):
         self.assertIn("not authorized", response.data["error"].lower())
 
         mock_db_class.assert_not_called()
-        
+
     @patch("core.views.Neo4jConnection")
     @patch("core.views.get_authorization_context")
     @patch("core.views.authorize_resource")
@@ -446,3 +446,75 @@ class ComplaintAuthorizationTests(APITestCase):
         self.assertIn("not authorized", response.data["error"].lower())
 
         mock_db_class.assert_not_called()
+
+    @patch("core.views.Neo4jConnection")
+    @patch("core.views.get_resource_estate")
+    @patch("core.views.authorize_resource")
+    @patch("core.views.get_authorization_context")
+    def test_manager_can_assign_unassigned_resident_to_own_estate_property(
+        self,
+        mock_context,
+        mock_authorize_resource,
+        mock_get_resource_estate,
+        mock_db_class,
+    ):
+        mock_context.return_value = {
+            "role": "manager",
+            "estate_id": "E001",
+            "estate_name": "Greenfield Estate",
+            "scope": "current_estate",
+        }
+        mock_get_resource_estate.return_value = None
+
+        mock_db = mock_db_class.return_value
+        mock_db.query.side_effect = [
+            [{"r": {"resident_id": "R010"}}],
+            [{"p": {"property_id": "P051"}}],
+            [],
+            [],
+            [{"resident_id": "R010", "property_id": "P051"}],
+        ]
+
+        self.user.profile.role = "manager"
+        self.user.profile.resident_id = None
+        self.user.profile.save()
+
+        response = self.client.post(
+            "/api/residents/assign-property/",
+            {"resident_id": "R010", "property_id": "P051"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        mock_authorize_resource.assert_called_once_with(
+            mock_context.return_value, "property", "P051"
+        )
+
+    @patch("core.views.get_resource_estate")
+    @patch("core.views.authorize_resource")
+    @patch("core.views.get_authorization_context")
+    def test_manager_cannot_assign_resident_from_other_estate(
+        self,
+        mock_context,
+        mock_authorize_resource,
+        mock_get_resource_estate,
+    ):
+        mock_context.return_value = {
+            "role": "manager",
+            "estate_id": "E001",
+            "estate_name": "Greenfield Estate",
+            "scope": "current_estate",
+        }
+        mock_get_resource_estate.return_value = "E002"
+
+        self.user.profile.role = "manager"
+        self.user.profile.resident_id = None
+        self.user.profile.save()
+
+        response = self.client.post(
+            "/api/residents/assign-property/",
+            {"resident_id": "R010", "property_id": "P051"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 403)

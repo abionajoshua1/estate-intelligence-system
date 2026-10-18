@@ -16,12 +16,23 @@ from .neo4j_connection import Neo4jConnection
 
 from .authorization import get_authorization_context, AuthorizationError
 
+def _resolve_dashboard_context(request):
+        try:
+            return get_authorization_context(request.user), None
+        except (AuthorizationError, ValueError) as exc:
+            return None, Response(
+                {"error": str(exc)},
+                status=403,
+            )
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def dashboard_overview(request):
-    
-    context = get_authorization_context(request.user)
+
+    context, error_response = _resolve_dashboard_context(request)
+
+    if error_response:
+        return error_response
 
     cache_key = (
         f"dashboard_overview:"
@@ -59,7 +70,7 @@ def dashboard_overview(request):
                 "estate_id": context.get("estate_id"),
             },
         )
-        
+
         total_residents = resident_count[0]["total_residents"]
 
         property_query = """
@@ -77,9 +88,9 @@ def dashboard_overview(request):
                 "estate_id": context.get("estate_id"),
             },
         )
-        
+
         total_properties = property_count[0]["total_properties"]
-        
+
         estate_query = """
         MATCH (e:Estate)
         WHERE
@@ -89,13 +100,13 @@ def dashboard_overview(request):
         """
 
         estate_count = db.query(
-            estate_query, 
+            estate_query,
             {
             "scope": context.get("scope"),
             "estate_id": context.get("estate_id"),
             },
         )
-        
+
         total_estates = estate_count[0]["total_estates"]
 
 
@@ -248,13 +259,17 @@ def dashboard_overview(request):
 
     finally:
         db.close()
-        
-        
-        
+
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def complaints_by_category(request):
-    context = get_authorization_context(request.user)
+
+    context, error_response = _resolve_dashboard_context(request)
+    if error_response:
+        return error_response
+
     db = Neo4jConnection()
 
     try:
@@ -282,12 +297,15 @@ def complaints_by_category(request):
 
     finally:
         db.close()
-        
-        
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def properties_by_status(request):
-    context = get_authorization_context(request.user)
+    context, error_response = _resolve_dashboard_context(request)
+    if error_response:
+        return error_response
+
     db = Neo4jConnection()
 
     try:
@@ -314,17 +332,13 @@ def properties_by_status(request):
 
     finally:
         db.close()
-        
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def residents_with_most_complaints(request):
-    try:
-        context = get_authorization_context(request.user)
-    except (AuthorizationError, ValueError) as exc:
-        return Response(
-            {"error": str(exc)},
-            status=403,
-        )
+    context, error_response = _resolve_dashboard_context(request)
+    if error_response:
+        return error_response
 
     db = Neo4jConnection()
 
@@ -354,11 +368,15 @@ def residents_with_most_complaints(request):
 
     finally:
         db.close()
-        
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def properties_with_most_complaints(request):
-    context = get_authorization_context(request.user)
+
+    context, error_response = _resolve_dashboard_context(request)
+    if error_response:
+        return error_response
+
     db = Neo4jConnection()
 
     try:
@@ -388,11 +406,15 @@ def properties_with_most_complaints(request):
 
     finally:
         db.close()
-        
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def recent_complaint_activity(request):
-    context = get_authorization_context(request.user)
+
+    context, error_response = _resolve_dashboard_context(request)
+    if error_response:
+        return error_response
+
     db = Neo4jConnection()
 
     try:

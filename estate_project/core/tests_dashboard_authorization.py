@@ -89,7 +89,7 @@ class DashboardAuthorizationTests(APITestCase):
                 parameters["estate_id"],
                 "E001",
             )
-            
+
     @patch("core.dashboard_views.Neo4jConnection")
     @patch("core.dashboard_views.get_authorization_context")
     def test_admin_dashboard_uses_global_scope(
@@ -151,8 +151,8 @@ class DashboardAuthorizationTests(APITestCase):
 
             self.assertIsNone(
                 parameters["estate_id"],
-            )    
-            
+            )
+
     @patch("core.dashboard_views.Neo4jConnection")
     @patch("core.dashboard_views.get_authorization_context")
     def test_manager_complaints_by_category_uses_current_estate_scope(
@@ -211,7 +211,7 @@ class DashboardAuthorizationTests(APITestCase):
             parameters["estate_id"],
             "E001",
         )
-        
+
     @patch("core.dashboard_views.Neo4jConnection")
     @patch("core.dashboard_views.get_authorization_context")
     def test_admin_complaints_by_category_uses_global_scope(
@@ -264,7 +264,7 @@ class DashboardAuthorizationTests(APITestCase):
         self.assertIsNone(
             parameters["estate_id"],
         )
-        
+
     @patch("core.dashboard_views.Neo4jConnection")
     @patch("core.dashboard_views.get_authorization_context")
     def test_manager_properties_by_status_uses_current_estate_scope(
@@ -318,7 +318,7 @@ class DashboardAuthorizationTests(APITestCase):
             parameters["estate_id"],
             "E001",
         )
-        
+
     @patch("core.dashboard_views.Neo4jConnection")
     @patch("core.dashboard_views.get_authorization_context")
     def test_admin_properties_by_status_uses_global_scope(
@@ -371,7 +371,7 @@ class DashboardAuthorizationTests(APITestCase):
         self.assertIsNone(
             parameters["estate_id"],
         )
-        
+
     @patch("core.dashboard_views.Neo4jConnection")
     @patch("core.dashboard_views.get_authorization_context")
     def test_manager_residents_with_most_complaints_uses_current_estate_scope(
@@ -422,7 +422,7 @@ class DashboardAuthorizationTests(APITestCase):
             parameters["estate_id"],
             "E001",
         )
-        
+
     @patch("core.dashboard_views.Neo4jConnection")
     @patch("core.dashboard_views.get_authorization_context")
     def test_admin_residents_with_most_complaints_uses_global_scope(
@@ -472,7 +472,7 @@ class DashboardAuthorizationTests(APITestCase):
         self.assertIsNone(
             parameters["estate_id"],
         )
-        
+
     @patch("core.dashboard_views.Neo4jConnection")
     @patch("core.dashboard_views.get_authorization_context")
     def test_manager_properties_with_most_complaints_uses_current_estate_scope(
@@ -543,8 +543,8 @@ class DashboardAuthorizationTests(APITestCase):
         self.assertIn('$scope = "global"', query)
         self.assertEqual(parameters["scope"], "global")
         self.assertIsNone(parameters["estate_id"])
-        
-        
+
+
     @patch("core.dashboard_views.Neo4jConnection")
     @patch("core.dashboard_views.get_authorization_context")
     def test_manager_recent_complaint_activity_uses_current_estate_scope(
@@ -623,7 +623,7 @@ class DashboardAuthorizationTests(APITestCase):
         self.assertIn('$scope = "global"', query)
         self.assertEqual(parameters["scope"], "global")
         self.assertIsNone(parameters["estate_id"])
-        
+
 
     def test_dashboard_cache_hit_skips_neo4j(self):
         from unittest.mock import patch
@@ -728,8 +728,8 @@ class DashboardAuthorizationTests(APITestCase):
             timeout=30,
         )
         mock_db.close.assert_called_once()
-        
-    
+
+
     def test_dashboard_redis_outage_falls_back_to_neo4j(self):
         from unittest.mock import patch
         from redis.exceptions import RedisError
@@ -777,13 +777,12 @@ class DashboardAuthorizationTests(APITestCase):
         self.assertEqual(response.data["total_properties"], 10)
         self.assertEqual(mock_db.query.call_count, 10)
         mock_db.close.assert_called_once()
-        
+
+    @patch("core.dashboard_views.cache.get")
     @patch("core.dashboard_views.Neo4jConnection")
     @patch("core.dashboard_views.get_authorization_context")
-    def test_unlinked_resident_gets_controlled_response(
-        self,
-        mock_context,
-        mock_db_class,
+    def test_unlinked_resident_gets_controlled_response_on_all_dashboard_endpoints(
+        self, mock_context, mock_db_class, mock_cache_get
     ):
         self.user.profile.role = "resident"
         self.user.profile.resident_id = None
@@ -793,9 +792,21 @@ class DashboardAuthorizationTests(APITestCase):
             "Resident account is not linked to a resident record."
         )
 
-        response = self.client.get("/api/dashboard/top-residents/")
+        urls = [
+            "/api/dashboard/overview/",
+            "/api/dashboard/complaints-by-category/",
+            "/api/dashboard/properties-by-status/",
+            "/api/dashboard/top-residents/",
+            "/api/dashboard/top-properties/",
+            "/api/dashboard/recent-complaints/",
+        ]
 
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        for url in urls:
+            with self.subTest(url=url):
+                response = self.client.get(url)
+                self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
         mock_db_class.assert_not_called()
+        mock_cache_get.assert_not_called()
 
 

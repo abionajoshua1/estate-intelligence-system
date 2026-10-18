@@ -32,8 +32,8 @@ from django.conf import settings
 from .neo4j_connection import Neo4jConnection
 
 from .ai_service import (
-    ask_llm, 
-    detect_ai_intent, 
+    ask_llm,
+    detect_ai_intent,
     generate_cypher,
     analyze_results,
     )
@@ -56,6 +56,7 @@ from rest_framework.response import Response
 from .authorization import (
     authorize_resource,
     get_authorization_context,
+    get_resource_estate,
     is_global_access,
     authorize_estate,
     AuthorizationError,
@@ -265,7 +266,7 @@ User Question:
         "intent": intent,
         "response": answer,
     })
-    
+
 # =========================
 # RESIDENT CRUD
 # =========================
@@ -358,7 +359,7 @@ def create_resident(request):
             },
             status=400,
         )
-    
+
 
     # Create Neo4j connection
     db = Neo4jConnection()
@@ -401,7 +402,7 @@ def create_resident(request):
             {"error": "A resident with this email already exists."},
             status=400
         )
-    
+
     check_phone_query = """
     MATCH (r:Resident)
     WHERE r.phone = $phone
@@ -415,7 +416,7 @@ def create_resident(request):
             "phone": phone
         }
     )
-    
+
     if existing_phone:
         db.close()
         return Response(
@@ -434,7 +435,7 @@ def create_resident(request):
         registered_at: datetime()
     })
 
-    
+
     RETURN
         r.resident_id AS resident_id,
         r.name AS name,
@@ -470,7 +471,7 @@ def create_resident(request):
 @api_view(["PUT"])
 @permission_classes([IsManagerOrAdmin])
 def update_resident(request, resident_id):
-    
+
     try:
         context = get_authorization_context(request.user)
 
@@ -580,7 +581,7 @@ def update_resident(request, resident_id):
             },
             status=400,
         )
-    
+
     check_phone_query = """
     MATCH (r:Resident)
     WHERE r.phone = $phone
@@ -605,7 +606,7 @@ def update_resident(request, resident_id):
             },
             status=400,
         )
-    
+
     update_query = """
     MATCH (r:Resident {resident_id: $resident_id})
 
@@ -651,7 +652,7 @@ def update_resident(request, resident_id):
 @api_view(["DELETE"])
 @permission_classes([IsManagerOrAdmin])
 def delete_resident(request, resident_id):
-    
+
     try:
         context = get_authorization_context(request.user)
 
@@ -714,8 +715,8 @@ def delete_resident(request, resident_id):
         },
         status=200,
     )
-    
-    
+
+
 @api_view(["POST"])
 @permission_classes([IsManagerOrAdmin])
 def link_resident_account(request):
@@ -730,7 +731,7 @@ def link_resident_account(request):
             },
             status=400,
         )
-        
+
     try:
         context = get_authorization_context(request.user)
 
@@ -1416,8 +1417,8 @@ def delete_property(request, property_id):
             "message": "Property deleted successfully."
         }
     )
-    
-    
+
+
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
@@ -1575,7 +1576,7 @@ def create_complaint(request):
         )
 
     db = Neo4jConnection()
-    
+
     try:
 
         # ----------------------------------------------------------
@@ -1698,7 +1699,7 @@ def create_complaint(request):
                 "priority": priority,
             }
         )
-        
+
         if complaint:
             try:
                 resident_profile = Profile.objects.get(
@@ -1734,8 +1735,8 @@ def create_complaint(request):
                 ),
                 notification_type="complaint",
             )
-        
-    
+
+
         return Response(
             {
                 "message": "Complaint created successfully.",
@@ -1746,8 +1747,8 @@ def create_complaint(request):
 
     finally:
         db.close()
-        
- 
+
+
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
@@ -1958,7 +1959,7 @@ def get_complaints(request):
         "has_next": has_next,
         "results": complaints,
     })
-    
+
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
@@ -1967,7 +1968,7 @@ def global_search(request):
 
     if not query_text:
         return Response([])
-    
+
     # ----------------------------------------------------------
     # Authorization
     # ----------------------------------------------------------
@@ -1980,7 +1981,7 @@ def global_search(request):
             {"error": str(exc)},
             status=403,
         )
-        
+
     role = context.get("role")
 
     resident_id = getattr(
@@ -2198,7 +2199,7 @@ def global_search(request):
                 "resident_id": resident_id,
             },
         )
-        
+
     finally:
         db.close()
 
@@ -2368,7 +2369,7 @@ def update_complaint(request, complaint_id):
                     message=notification_messages[status_value],
                     notification_type="complaint",
                 )
-                
+
                 queue_complaint_email(
                     resident_profile.user,
                     notification_titles[status_value],
@@ -2390,7 +2391,7 @@ def update_complaint(request, complaint_id):
 
     finally:
         db.close()
-    
+
 @api_view(["DELETE"])
 @permission_classes([IsManagerOrAdmin])
 def delete_complaint(request, complaint_id):
@@ -2451,7 +2452,7 @@ def delete_complaint(request, complaint_id):
         },
         status=200,
     )
-    
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def get_estates(request):
@@ -2862,8 +2863,8 @@ def delete_estate(request, estate_id):
 
     finally:
         db.close()
-        
-        
+
+
 @api_view(["POST"])
 @permission_classes([IsManagerOrAdmin])
 def create_manager(request):
@@ -3368,8 +3369,8 @@ def delete_manager(request, manager_id):
 
     finally:
         db.close()
-        
-        
+
+
 @api_view(["POST"])
 @permission_classes([IsManagerOrAdmin])
 def create_maintenance_team(request):
@@ -3905,7 +3906,7 @@ def delete_maintenance_team(request, team_id):
 
     finally:
         db.close()
-        
+
 
 @api_view(["POST"])
 @permission_classes([IsManagerOrAdmin])
@@ -3934,21 +3935,23 @@ def assign_property_to_resident(request):
     try:
         context = get_authorization_context(request.user)
 
-        # The resident must belong to the manager's
-        # authorized estate.
-        authorize_resource(
-            context,
-            "resident",
-            resident_id,
-        )
-
-        # The property must also belong to the manager's
-        # authorized estate.
+        # The target property must belong to the
+        # caller's authorized estate.
         authorize_resource(
             context,
             "property",
             property_id,
         )
+
+        # If the resident already belongs to an estate,
+        # enforce the existing estate authorization.
+        resident_estate_id = get_resource_estate(
+            "resident",
+            resident_id,
+        )
+
+        if resident_estate_id:
+            authorize_estate(context, resident_estate_id)
 
     except (AuthorizationError, ValueError) as exc:
         return Response(
@@ -4077,7 +4080,7 @@ def assign_property_to_resident(request):
 
     finally:
         db.close()
-        
+
 @api_view(["POST"])
 @permission_classes([IsManagerOrAdmin])
 def assign_property_to_complaint(request):
@@ -4197,8 +4200,8 @@ def assign_property_to_complaint(request):
 
     finally:
         db.close()
-        
-        
+
+
 @api_view(["POST"])
 @permission_classes([IsManagerOrAdmin])
 def assign_complaint_to_team(request):
@@ -4368,7 +4371,7 @@ def assign_complaint_to_team(request):
                     ),
                     notification_type="complaint",
                 )
-                
+
                 queue_complaint_email(
                     resident_profile.user,
                     "Complaint Assigned",
@@ -4395,7 +4398,7 @@ def assign_complaint_to_team(request):
         db.close()
 
 
-    
+
 def normalize_result(data):
     """Normalize Cypher result aliases into the application's internal schema."""
 
@@ -4444,15 +4447,15 @@ def format_results(question: str, data):
 
         return (
             "Estate Overview:\n\n"
-            f"• Residents: {r.get('total_residents', 0)}\n"
-            f"• Properties: {r.get('total_properties', 0)}\n"
-            f"• Available properties: {r.get('available_properties', 0)}\n"
-            f"• Occupied properties: {r.get('occupied_properties', 0)}\n"
-            f"• Properties under maintenance: {r.get('maintenance_properties', 0)}\n"
-            f"• Total complaints: {r.get('total_complaints', 0)}\n"
-            f"• Open complaints: {r.get('open_complaints', 0)}\n"
-            f"• Complaints in progress: {r.get('in_progress_complaints', 0)}\n"
-            f"• Resolved complaints: {r.get('resolved_complaints', 0)}"
+            f"â€¢ Residents: {r.get('total_residents', 0)}\n"
+            f"â€¢ Properties: {r.get('total_properties', 0)}\n"
+            f"â€¢ Available properties: {r.get('available_properties', 0)}\n"
+            f"â€¢ Occupied properties: {r.get('occupied_properties', 0)}\n"
+            f"â€¢ Properties under maintenance: {r.get('maintenance_properties', 0)}\n"
+            f"â€¢ Total complaints: {r.get('total_complaints', 0)}\n"
+            f"â€¢ Open complaints: {r.get('open_complaints', 0)}\n"
+            f"â€¢ Complaints in progress: {r.get('in_progress_complaints', 0)}\n"
+            f"â€¢ Resolved complaints: {r.get('resolved_complaints', 0)}"
         )
 
     def count_result(rows, field, singular, plural):
@@ -4471,9 +4474,9 @@ def format_results(question: str, data):
             estate_id = item.get("estate_id")
 
             if estate_id:
-                lines.append(f"• {name} ({estate_id})")
+                lines.append(f"â€¢ {name} ({estate_id})")
             else:
-                lines.append(f"• {name}")
+                lines.append(f"â€¢ {name}")
 
         return "\n".join(lines)
 
@@ -4485,9 +4488,9 @@ def format_results(question: str, data):
             resident_id = item.get("resident_id")
 
             if resident_id:
-                lines.append(f"• {name} ({resident_id})")
+                lines.append(f"â€¢ {name} ({resident_id})")
             else:
-                lines.append(f"• {name}")
+                lines.append(f"â€¢ {name}")
 
         return "\n".join(lines)
 
@@ -4500,7 +4503,7 @@ def format_results(question: str, data):
             estate = item.get("estate") or "Unknown"
 
             lines.append(
-                f"• {name} ({resident_id}) - {estate}"
+                f"â€¢ {name} ({resident_id}) - {estate}"
             )
 
         return "\n".join(lines)
@@ -4514,11 +4517,11 @@ def format_results(question: str, data):
             property_number = item.get("property_number") or "Unknown"
 
             lines.append(
-                f"• {name} ({resident_id}) - {property_number}"
+                f"â€¢ {name} ({resident_id}) - {property_number}"
             )
 
         return "\n".join(lines)
-    
+
     def resident_location(rows):
         lines = ["Resident Location:\n"]
 
@@ -4530,11 +4533,11 @@ def format_results(question: str, data):
             estate = item.get("estate") or "Unknown"
 
             lines.append(
-                f"• {name} ({resident_id}) - {property_number} | {property_type} | {estate}"
+                f"â€¢ {name} ({resident_id}) - {property_number} | {property_type} | {estate}"
             )
 
         return "\n".join(lines)
-    
+
     def properties(rows):
         lines = ["Properties:\n"]
 
@@ -4544,11 +4547,11 @@ def format_results(question: str, data):
             status = item.get("status") or "Unknown"
 
             lines.append(
-                f"• {number} - {property_type} | {status}"
+                f"â€¢ {number} - {property_type} | {status}"
             )
 
         return "\n".join(lines)
-    
+
     def properties_needing_attention(rows):
         lines = ["Properties Needing Attention:\n"]
 
@@ -4559,13 +4562,13 @@ def format_results(question: str, data):
             count = item.get("complaint_count", 0)
 
             lines.append(
-                f"• {number} - {property_type} | "
+                f"â€¢ {number} - {property_type} | "
                 f"{status} | {count} "
                 f"{'complaint' if count == 1 else 'complaints'}"
             )
 
         return "\n".join(lines)
-    
+
 
     def estate_property_status(rows):
         lines = ["Estate Property Status:\n"]
@@ -4577,7 +4580,7 @@ def format_results(question: str, data):
             status = item.get("status") or "Unknown"
 
             lines.append(
-                f"• {estate} - {number} | "
+                f"â€¢ {estate} - {number} | "
                 f"{property_type} | {status}"
             )
 
@@ -4593,7 +4596,7 @@ def format_results(question: str, data):
             status = item.get("status") or "Unknown"
 
             lines.append(
-                f"• {complaint_id}: "
+                f"â€¢ {complaint_id}: "
                 f"{title} | {priority} | {status}"
             )
 
@@ -4610,7 +4613,7 @@ def format_results(question: str, data):
             )
 
             lines.append(
-                f"• {team} | {specialization}"
+                f"â€¢ {team} | {specialization}"
             )
 
         return "\n".join(lines)
@@ -4689,12 +4692,12 @@ def format_results(question: str, data):
             manager_id = item.get("manager_id") or "Unknown"
 
             lines.append(
-                f"• {name} ({manager_id})"
+                f"â€¢ {name} ({manager_id})"
             )
 
         return "\n".join(lines)
-    
-    
+
+
 
     # ==========================================================
     # RESULT TYPE REGISTRY
@@ -4761,7 +4764,7 @@ def format_results(question: str, data):
              "property_number", "property_type", "status"},
             estate_property_status,
         ),
-        
+
          (
             {
                 "resident_id",
@@ -4774,7 +4777,7 @@ def format_results(question: str, data):
             },
             resident_location,
         ),
-         
+
         (
             {"resident_id", "name", "estate"},
             residents_in_estate,
@@ -4798,9 +4801,9 @@ def format_results(question: str, data):
         (
             {"property_number", "complaint_count"},
             top_properties,
-            
+
         ),
-        
+
         (
             {
                 "property_id",
@@ -4865,10 +4868,10 @@ def format_results(question: str, data):
             matches,
             key=lambda item: len(item[0])
         )
-        
+
         print(">>> FORMATTER USED:", formatter.__name__)
         return formatter(data)
-    
+
     print(">>> NO FORMATTER MATCHED")
     print(">>> FORMAT_RESULTS QUESTION:", question)
     print(">>> FORMAT_RESULTS DATA:", data)
@@ -4880,10 +4883,10 @@ def resolve_user_estate(user):
     Resolve the authenticated user's estate context.
 
     Managers:
-        User → Profile.manager_id → Manager → Estate
+        User â†’ Profile.manager_id â†’ Manager â†’ Estate
 
     Residents:
-        User → Profile.resident_id → Resident → Property → Estate
+        User â†’ Profile.resident_id â†’ Resident â†’ Property â†’ Estate
 
     Admins:
         Global system access. No estate restriction.
@@ -4982,8 +4985,8 @@ def resolve_user_estate(user):
         "estate_name": result[0]["estate_name"],
         "scope": "current_estate",
     }
-    
-    
+
+
 def plan_query(question, understanding, user_context):
     """
     Layer 2: Intent & Query Planning.
@@ -5115,8 +5118,8 @@ def validate_ai_query_scope(cypher, parameters, query_plan):
     normalized_query = re.sub(r"\s+", " ", cypher).lower()
     # Estate-scoped queries must bind the authenticated estate parameter.
     return "$estate_id" in normalized_query
-    
-    
+
+
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def ai_query_v3(request):
@@ -5155,7 +5158,7 @@ def ai_query_v3(request):
         )
 
         intent = understanding["intent"]
-        
+
 
         if user_context is None:
             return Response(
@@ -5185,7 +5188,7 @@ def ai_query_v3(request):
 
         generated = generate_cypher(
             query_question,
-            context=generation_context, 
+            context=generation_context,
             semantic_understanding=understanding,
         )
 
@@ -5194,7 +5197,7 @@ def ai_query_v3(request):
         else:
             cypher = generated
             parameters = {}
-            
+
         if query_plan.get("scope") == "current_estate":
             parameters["estate_id"] = query_plan["estate_id"]
 
@@ -5221,7 +5224,7 @@ def ai_query_v3(request):
                 {"error": "Unsafe Cypher generated."},
                 status=400,
             )
-            
+
         print(">>> FINAL SCOPE VALIDATION INPUT <<<")
         print("CYTHER:", cypher)
         print("PARAMETERS:", parameters)
@@ -5298,7 +5301,7 @@ def ai_query_v3(request):
             },
             status=500,
         )
-        
+
 
 class ResidentOnlyView(APIView):
     permission_classes = [IsResident]
