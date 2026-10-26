@@ -38,6 +38,19 @@ class AIQueryScopeSecurityTests(TestCase):
         )
         self.assertFalse(result)
         
+    def test_rejects_unscoped_pattern_after_estate_filter(self):
+        result = validate_ai_query_scope(
+            (
+                "MATCH (e:Estate) "
+                "WHERE e.estate_id = $estate_id "
+                "MATCH (r:Resident) "
+                "RETURN r"
+            ),
+            {"estate_id": "E001"},
+            {"scope": "current_estate", "estate_id": "E001"},
+        )
+        self.assertFalse(result)
+        
 
 class CypherNormalizerTests(TestCase):
 

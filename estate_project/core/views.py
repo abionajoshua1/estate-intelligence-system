@@ -5108,7 +5108,7 @@ def validate_ai_query_scope(cypher, parameters, query_plan):
         return False
 
     if query_plan.get("scope") == "all_estates":
-            return True
+        return True
 
     estate_id = query_plan.get("estate_id")
     if not estate_id or parameters.get("estate_id") != estate_id:
@@ -5117,13 +5117,13 @@ def validate_ai_query_scope(cypher, parameters, query_plan):
     normalized_query = re.sub(r"\s+", " ", cypher).lower()
 
     if not re.match(r"^\s*(match|optional\s+match)\b", normalized_query):
-            return False
+        return False
 
     if not re.search(
-            r"\bwhere\b[^;]*\be\.estate_id\s*=\s*\$estate_id\b",
-            normalized_query,
-        ):
-            return False
+        r"\bwhere\b[^;]*\be\.estate_id\s*=\s*\$estate_id\b",
+        normalized_query,
+    ):
+        return False
 
     return True
 
