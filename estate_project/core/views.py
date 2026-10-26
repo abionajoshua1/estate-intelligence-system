@@ -5101,23 +5101,31 @@ def plan_query(question, understanding, user_context):
 
 
 def validate_ai_query_scope(cypher, parameters, query_plan):
-    """Validate that a generated query is constrained to its planned scope."""
+    """Reject estate-scoped queries without an explicit estate filter."""
     if not isinstance(cypher, str) or not isinstance(parameters, dict):
         return False
     if not isinstance(query_plan, dict):
         return False
 
-    # Administrators are intentionally allowed to query across estates.
     if query_plan.get("scope") == "all_estates":
-        return True
+            return True
 
     estate_id = query_plan.get("estate_id")
     if not estate_id or parameters.get("estate_id") != estate_id:
         return False
 
     normalized_query = re.sub(r"\s+", " ", cypher).lower()
-    # Estate-scoped queries must bind the authenticated estate parameter.
-    return "$estate_id" in normalized_query
+
+    if not re.match(r"^\s*(match|optional\s+match)\b", normalized_query):
+            return False
+
+    if not re.search(
+            r"\bwhere\b[^;]*\be\.estate_id\s*=\s*\$estate_id\b",
+            normalized_query,
+        ):
+            return False
+
+    return True
 
 
 @api_view(["POST"])

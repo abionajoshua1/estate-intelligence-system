@@ -1,9 +1,10 @@
+
 from django.test import TestCase
 
 from .ai_service import generate_cypher
 from .cypher_guard import is_safe_cypher
 from .cypher_normalizer import normalize_cypher
-from .views import format_results
+from .views import format_results, validate_ai_query_scope
 
 from rest_framework.test import APITestCase
 from unittest.mock import patch
@@ -11,6 +12,32 @@ from rest_framework import status
 
 from django.contrib.auth import get_user_model
 
+class AIQueryScopeSecurityTests(TestCase):
+    
+    def test_rejects_estate_parameter_not_used_as_filter(self):
+        result = validate_ai_query_scope(
+            "MATCH (e:Estate) RETURN e, $estate_id AS estate_id",
+            {"estate_id": "E001"},
+            {"scope": "current_estate", "estate_id": "E001"},
+        )
+        self.assertFalse(result)
+
+    def test_rejects_mismatched_estate_id(self):
+        result = validate_ai_query_scope(
+            "MATCH (e:Estate) WHERE e.estate_id = $estate_id RETURN e",
+            {"estate_id": "E002"},
+            {"scope": "current_estate", "estate_id": "E001"},
+        )
+        self.assertFalse(result)
+
+    def test_rejects_missing_estate_id(self):
+        result = validate_ai_query_scope(
+            "MATCH (e:Estate) WHERE e.estate_id = $estate_id RETURN e",
+            {},
+            {"scope": "current_estate", "estate_id": "E001"},
+        )
+        self.assertFalse(result)
+        
 
 class CypherNormalizerTests(TestCase):
 
@@ -177,7 +204,7 @@ class AIQueryV3APITests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["question"], "Show all residents")
-        self.assertEqual(response.data["response"], "1 matching record were retrieved.",)
+        self.assertEqual(response.data["response"], "John Doe lives in the specified estate.")
 
     def test_empty_question(self):
         response = self.client.post(
